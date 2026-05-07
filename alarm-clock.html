@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>闹钟</title>
+<style>
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --surface2: #222240;
+    --text: #e0e0f0;
+    --text2: #9090b0;
+    --accent: #6c5ce7;
+    --accent2: #a29bfe;
+    --danger: #e74c3c;
+    --success: #2ecc71;
+    --warn: #f39c12;
+    --radius: 12px;
+    --transition: 0.2s ease;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: var(--bg);
+    background-image:
+      radial-gradient(ellipse at 50% 0%, rgba(108, 92, 231, 0.15) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 100%, rgba(162, 155, 254, 0.08) 0%, transparent 60%);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .app {
+    width: 100%;
+    max-width: 520px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    padding-top: 30px;
+  }
+
+  /* ── Clock ── */
+  .clock-section {
+    text-align: center;
+    padding: 32px 20px;
+    background: var(--surface);
+    border-radius: 24px;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .clock-time {
+    font-size: 72px;
+    font-weight: 300;
+    letter-spacing: 4px;
+    font-variant-numeric: tabular-nums;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    color: #fff;
+  }
+  .clock-date {
+    font-size: 16px;
+    color: var(--text2);
+    margin-top: 8px;
+    letter-spacing: 1px;
+  }
+
+  /* ── Panel / Card ── */
+  .panel {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 20px;
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .panel-header h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text2);
+    font-weight: 500;
+    margin: 0;
+  }
+  .panel-header .hint {
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  /* ── Form Controls ── */
+  .form-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  input, select {
+    background: var(--surface2);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    transition: border var(--transition);
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  input[type="time"] {
+    width: 110px;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  }
+  input[type="text"] { flex: 1; min-width: 100px; }
+  select { min-width: 90px; }
+
+  .btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #7d6ff0; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(108,92,231,0.4); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-sm {
+    padding: 6px 14px;
+    font-size: 12px;
+    border-radius: 6px;
+  }
+  .btn-outline {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.15);
+    color: var(--text2);
+  }
+  .btn-outline:hover { border-color: var(--accent); color: var(--text); }
+  .btn-danger-sm {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--text2);
+    padding: 4px 10px;
+    font-size: 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+  .btn-danger-sm:hover { color: var(--danger); border-color: rgba(231,76,60,0.3); }
+
+  /* ── Ringtone Management ── */
+  .ringtone-section {
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid rgba(255,255,255,0.06);
+    overflow: hidden;
+  }
+  .ringtone-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    cursor: pointer;
+    user-select: none;
+    transition: background var(--transition);
+  }
+  .ringtone-toggle:hover { background: rgba(255,255,255,0.02); }
+  .ringtone-toggle h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text2);
+    font-weight: 500;
+  }
+  .ringtone-toggle .arrow {
+    color: var(--text2);
+    transition: transform var(--transition);
+    font-size: 12px;
+  }
+  .ringtone-section.open .ringtone-toggle .arrow { transform: rotate(180deg); }
+  .ringtone-body { display: none; padding: 0 20px 20px; }
+  .ringtone-section.open .ringtone-body { display: block; }
+
+  .ringtone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .ringtone-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface2);
+    border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.04);
+    transition: border var(--transition);
+  }
+  .ringtone-item.playing { border-color: var(--accent); }
+  .ringtone-item .rt-icon { font-size: 20px; flex-shrink: 0; }
+  .ringtone-item .rt-name { flex: 1; font-size: 14px; font-weight: 500; min-width: 0; }
+  .ringtone-item .rt-type {
+    font-size: 11px;
+    color: var(--text2);
+    background: rgba(255,255,255,0.04);
+    padding: 2px 8px;
+    border-radius: 10px;
+    flex-shrink: 0;
+  }
+  .ringtone-item .rt-size {
+    font-size: 11px;
+    color: var(--text2);
+    flex-shrink: 0;
+  }
+  .btn-play {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all var(--transition);
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  .btn-play:hover { background: #7d6ff0; }
+  .btn-play.playing { background: var(--danger); }
+
+  .upload-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .upload-row input[type="file"] { display: none; }
+  .upload-name {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ── Alarm List ── */
+  .list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .list-header h2 {
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text2);
+    font-weight: 500;
+  }
+  .list-count { font-size: 13px; color: var(--text2); }
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text2);
+    font-size: 15px;
+    line-height: 1.6;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid rgba(255,255,255,0.06);
+  }
+  .empty-state .icon { font-size: 40px; display: block; margin-bottom: 12px; opacity: 0.5; }
+
+  .alarms-container { display: flex; flex-direction: column; gap: 10px; }
+
+  .alarm-card {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    border: 1px solid rgba(255,255,255,0.06);
+    transition: all var(--transition);
+  }
+  .alarm-card.inactive { opacity: 0.45; }
+  .alarm-card.ringing {
+    border-color: var(--accent);
+    animation: pulse 1s ease-in-out infinite;
+    box-shadow: 0 0 30px rgba(108,92,231,0.3);
+  }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 20px rgba(108,92,231,0.2); }
+    50% { box-shadow: 0 0 40px rgba(108,92,231,0.5); }
+  }
+  .alarm-time-display {
+    font-size: 30px;
+    font-weight: 300;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+    letter-spacing: 2px;
+  }
+  .alarm-info { flex: 1; min-width: 0; }
+  .alarm-label {
+    font-size: 15px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .alarm-meta {
+    font-size: 12px;
+    color: var(--text2);
+    margin-top: 4px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .badge {
+    background: var(--surface2);
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+  }
+  .badge.snoozed { background: rgba(243,156,18,0.2); color: var(--warn); }
+  .badge.ringtone { background: rgba(108,92,231,0.15); color: var(--accent2); }
+
+  /* Toggle */
+  .toggle { position: relative; width: 48px; height: 28px; flex-shrink: 0; }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .toggle .slider {
+    position: absolute; inset: 0; background: var(--surface2);
+    border-radius: 28px; cursor: pointer; transition: var(--transition);
+  }
+  .toggle .slider::before {
+    content: ''; position: absolute; width: 22px; height: 22px;
+    left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: var(--transition);
+  }
+  .toggle input:checked+.slider { background: var(--accent); }
+  .toggle input:checked+.slider::before { transform: translateX(20px); }
+
+  .btn-icon {
+    background: none; border: none; color: var(--text2); font-size: 18px;
+    cursor: pointer; padding: 6px; border-radius: 6px; transition: all var(--transition);
+    line-height: 1; flex-shrink: 0;
+  }
+  .btn-icon:hover { color: var(--danger); background: rgba(231,76,60,0.1); }
+
+  /* ── Modal ── */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100; animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal {
+    background: var(--surface); border-radius: 20px; padding: 32px;
+    text-align: center; border: 1px solid rgba(255,255,255,0.08);
+    max-width: 360px; width: 90%; animation: scaleIn 0.3s ease;
+  }
+  @keyframes scaleIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+  .modal .ring-icon {
+    font-size: 56px; margin-bottom: 12px;
+    animation: shake 0.5s ease-in-out infinite;
+  }
+  @keyframes shake {
+    0%,100% { transform: rotate(0); } 20% { transform: rotate(15deg); }
+    40% { transform: rotate(-15deg); } 60% { transform: rotate(8deg); } 80% { transform: rotate(-8deg); }
+  }
+  .modal .alarm-time-big {
+    font-size: 48px; font-weight: 300;
+    font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace; letter-spacing: 3px;
+  }
+  .modal .alarm-label-big { font-size: 18px; color: var(--text2); margin-top: 4px; }
+  .modal .ringtone-name { font-size: 13px; color: var(--accent2); margin-top: 4px; }
+  .modal-actions { display: flex; gap: 12px; margin-top: 24px; justify-content: center; }
+  .btn-stop {
+    background: var(--danger); color: #fff; padding: 12px 28px; border: none;
+    border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer; transition: all var(--transition);
+  }
+  .btn-stop:hover { background: #ec7063; }
+  .btn-snooze {
+    background: var(--surface2); color: var(--text); padding: 12px 28px;
+    border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
+    font-size: 16px; font-weight: 600; cursor: pointer; transition: all var(--transition);
+  }
+  .btn-snooze:hover { background: #2a2a48; }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+    background: var(--surface2); color: var(--text); padding: 10px 24px;
+    border-radius: 20px; font-size: 14px; border: 1px solid rgba(255,255,255,0.08);
+    animation: toastIn 0.3s ease, toastOut 0.3s ease 2s forwards;
+    z-index: 200; pointer-events: none;
+  }
+  @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Clock -->
+  <div class="clock-section">
+    <div class="clock-time" id="clockTime">00:00:00</div>
+    <div class="clock-date" id="clockDate"></div>
+  </div>
+
+  <!-- Add Alarm -->
+  <div class="panel">
+    <div class="panel-header"><h2>添加闹钟</h2></div>
+    <div class="form-row">
+      <input type="time" id="alarmTime" required>
+      <input type="text" id="alarmLabel" placeholder="标签（可选）" maxlength="20">
+      <select id="alarmRepeat">
+        <option value="none">仅一次</option>
+        <option value="daily">每天</option>
+        <option value="weekdays">工作日</option>
+      </select>
+      <select id="alarmRingtone"></select>
+      <button class="btn btn-primary" id="btnAdd">添加</button>
+    </div>
+  </div>
+
+  <!-- Ringtone Management -->
+  <div class="ringtone-section" id="ringtoneSection">
+    <div class="ringtone-toggle" id="ringtoneToggle">
+      <h2>铃声管理</h2>
+      <span class="arrow">▾</span>
+    </div>
+    <div class="ringtone-body">
+      <div class="ringtone-list" id="ringtoneList"></div>
+      <div class="upload-row">
+        <button class="btn btn-outline btn-sm" id="btnUpload">上传 MP3</button>
+        <input type="file" id="fileInput" accept="audio/mpeg,.mp3">
+        <span class="upload-name" id="uploadName">未选择文件</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alarm List -->
+  <div>
+    <div class="list-header">
+      <h2>我的闹钟</h2>
+      <span class="list-count" id="listCount"></span>
+    </div>
+    <div class="alarms-container" id="alarmList"></div>
+  </div>
+</div>
+
+<!-- Ringing Modal -->
+<div class="overlay" id="overlay" style="display:none">
+  <div class="modal">
+    <div class="ring-icon">🔔</div>
+    <div class="alarm-time-big" id="modalTime"></div>
+    <div class="alarm-label-big" id="modalLabel"></div>
+    <div class="ringtone-name" id="modalRingtone"></div>
+    <div class="modal-actions">
+      <button class="btn-snooze" id="btnSnooze">贪睡 5 分钟</button>
+      <button class="btn-stop" id="btnStop">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="toastContainer"></div>
+
+<script>
+(function() {
+  // ═══════════════════ Constants ═══════════════════
+  var DAY_NAMES = ['周日','周一','周二','周三','周四','周五','周六'];
+  var REPEAT_LABELS = { none:'仅一次', daily:'每天', weekdays:'工作日' };
+  var BUILTIN_RINGTONES = [
+    { id:'beep', name:'经典蜂鸣', icon:'🔔' },
+    { id:'melody', name:'旋律', icon:'🎵' },
+    { id:'pulse', name:'脉冲', icon:'📳' }
+  ];
+
+  // ═══════════════════ State ═══════════════════
+  var alarms = [];
+  var customRingtones = []; // [{ id, name, mimeType }] — metadata only, data in IndexedDB
+  var triggeredThisMinute = {};
+  var ringingAlarmId = null;
+  var audioCtx = null;
+  var audioInterval = null;
+  var audioStopTime = 0;
+  var audioElement = null;
+  var audioElementUrl = null;
+  var previewActive = false;
+  var previewCleanup = null;
+
+  // ═══════════════════ DOM ═══════════════════
+  var $clockTime = document.getElementById('clockTime');
+  var $clockDate = document.getElementById('clockDate');
+  var $alarmTime = document.getElementById('alarmTime');
+  var $alarmLabel = document.getElementById('alarmLabel');
+  var $alarmRepeat = document.getElementById('alarmRepeat');
+  var $alarmRingtone = document.getElementById('alarmRingtone');
+  var $btnAdd = document.getElementById('btnAdd');
+  var $alarmList = document.getElementById('alarmList');
+  var $listCount = document.getElementById('listCount');
+  var $overlay = document.getElementById('overlay');
+  var $modalTime = document.getElementById('modalTime');
+  var $modalLabel = document.getElementById('modalLabel');
+  var $modalRingtone = document.getElementById('modalRingtone');
+  var $btnStop = document.getElementById('btnStop');
+  var $btnSnooze = document.getElementById('btnSnooze');
+  var $toastContainer = document.getElementById('toastContainer');
+  var $ringtoneSection = document.getElementById('ringtoneSection');
+  var $ringtoneToggle = document.getElementById('ringtoneToggle');
+  var $ringtoneList = document.getElementById('ringtoneList');
+  var $btnUpload = document.getElementById('btnUpload');
+  var $fileInput = document.getElementById('fileInput');
+  var $uploadName = document.getElementById('uploadName');
+
+  // ═══════════════════ Helpers ═══════════════════
+  function pad(n) { return String(n).padStart(2,'0'); }
+  function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
+  function formatTime(h,m) { return pad(h)+':'+pad(m); }
+  function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1048576).toFixed(1) + ' MB';
+  }
+
+  function showToast(msg) {
+    var el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    $toastContainer.appendChild(el);
+    setTimeout(function(){ el.remove(); }, 2500);
+  }
+
+  // ═══════════════════ IndexedDB ═══════════════════
+  function idbOpen() {
+    return new Promise(function(resolve, reject) {
+      var req = indexedDB.open('AlarmClock', 1);
+      req.onupgradeneeded = function(e) {
+        var db = e.target.result;
+        if (!db.objectStoreNames.contains('ringtones')) {
+          db.createObjectStore('ringtones', { keyPath:'id' });
+        }
+      };
+      req.onsuccess = function(e) { resolve(e.target.result); };
+      req.onerror = function(e) { reject(e.target.error); };
+    });
+  }
+
+  function idbSaveRingtone(id, name, data, mimeType) {
+    return idbOpen().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction('ringtones','readwrite');
+        tx.objectStore('ringtones').put({ id:id, name:name, data:data, mimeType:mimeType });
+        tx.oncomplete = function() { db.close(); resolve(); };
+        tx.onerror = function(e) { db.close(); reject(e.target.error); };
+      });
+    });
+  }
+
+  function idbLoadRingtone(id) {
+    return idbOpen().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction('ringtones','readonly');
+        var req = tx.objectStore('ringtones').get(id);
+        req.onsuccess = function() { db.close(); resolve(req.result); };
+        req.onerror = function(e) { db.close(); reject(e.target.error); };
+      });
+    });
+  }
+
+  function idbLoadAllRingtones() {
+    return idbOpen().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction('ringtones','readonly');
+        var req = tx.objectStore('ringtones').getAll();
+        req.onsuccess = function() { db.close(); resolve(req.result || []); };
+        req.onerror = function(e) { db.close(); reject(e.target.error); };
+      });
+    });
+  }
+
+  function idbDeleteRingtone(id) {
+    return idbOpen().then(function(db) {
+      return new Promise(function(resolve, reject) {
+        var tx = db.transaction('ringtones','readwrite');
+        tx.objectStore('ringtones').delete(id);
+        tx.oncomplete = function() { db.close(); resolve(); };
+        tx.onerror = function(e) { db.close(); reject(e.target.error); };
+      });
+    });
+  }
+
+  // ═══════════════════ Ringtone Lookup ═══════════════════
+  function getRingtoneInfo(id) {
+    for (var i = 0; i < BUILTIN_RINGTONES.length; i++) {
+      if (BUILTIN_RINGTONES[i].id === id) return { type:'builtin', id:id, name:BUILTIN_RINGTONES[i].name, icon:BUILTIN_RINGTONES[i].icon };
+    }
+    for (var j = 0; j < customRingtones.length; j++) {
+      if (customRingtones[j].id === id) return { type:'custom', id:id, name:customRingtones[j].name, icon:'🎧', mimeType:customRingtones[j].mimeType };
+    }
+    return null;
+  }
+
+  function getAllRingtones() {
+    var list = [];
+    BUILTIN_RINGTONES.forEach(function(r) {
+      list.push({ type:'builtin', id:r.id, name:r.name, icon:r.icon });
+    });
+    customRingtones.forEach(function(r) {
+      list.push({ type:'custom', id:r.id, name:r.name, icon:'🎧', mimeType:r.mimeType });
+    });
+    return list;
+  }
+
+  // ═══════════════════ Ringtone Selector ═══════════════════
+  function populateRingtoneSelect() {
+    var all = getAllRingtones();
+    $alarmRingtone.innerHTML = all.map(function(r) {
+      return '<option value="'+r.id+'">'+r.icon+' '+r.name+'</option>';
+    }).join('');
+  }
+
+  // ═══════════════════ Audio: Stop ═══════════════════
+  function stopAllAudio() {
+    // Web Audio
+    if (audioInterval) { clearInterval(audioInterval); audioInterval = null; }
+    if (audioCtx) {
+      audioCtx.close().catch(function(){});
+      audioCtx = null;
+    }
+    // Audio element
+    if (audioElement) {
+      try { audioElement.pause(); audioElement.src = ''; } catch(e){}
+      audioElement = null;
+    }
+    if (audioElementUrl) { URL.revokeObjectURL(audioElementUrl); audioElementUrl = null; }
+  }
+
+  function stopPreview() {
+    if (previewCleanup) { previewCleanup(); previewCleanup = null; }
+    previewActive = false;
+    updateRingtoneListUI();
+  }
+
+  // ═══════════════════ Audio: Built-in Patterns ═══════════════════
+  function startBuiltinRingtone(ringtoneId, durationMs) {
+    stopAllAudio();
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch(e) { return; }
+    var startTime = Date.now();
+    var maxDuration = durationMs || 30000;
+    audioStopTime = startTime + maxDuration;
+
+    function expired() { return Date.now() >= audioStopTime || !audioCtx; }
+
+    function makeOsc(freq, type, startOffset, dur, vol) {
+      if (expired()) return;
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.type = type || 'square';
+      osc.frequency.value = freq;
+      var t = audioCtx.currentTime + (startOffset || 0);
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(vol || 0.3, t + 0.015);
+      gain.gain.linearRampToValueAtTime(0.001, t + (dur || 0.25));
+      osc.start(t); osc.stop(t + (dur || 0.25));
+    }
+
+    if (ringtoneId === 'beep') {
+      var beep = false;
+      function tick() { if (expired()) { stopAllAudio(); return; } makeOsc(beep?880:660, 'square', 0, 0.28, 0.3); beep=!beep; }
+      tick();
+      audioInterval = setInterval(tick, 600);
+    } else if (ringtoneId === 'melody') {
+      var notes = [523, 659, 784, 1047];
+      var ni = 0;
+      function tick() { if (expired()) { stopAllAudio(); return; } makeOsc(notes[ni], 'sine', 0, 0.22, 0.25); ni=(ni+1)%notes.length; }
+      tick();
+      audioInterval = setInterval(tick, 260);
+    } else if (ringtoneId === 'pulse') {
+      var tick = 0;
+      function tickFn() {
+        if (expired()) { stopAllAudio(); return; }
+        if (tick % 5 < 3) makeOsc(880, 'square', 0, 0.12, 0.3);
+        tick++;
+      }
+      tickFn();
+      audioInterval = setInterval(tickFn, 140);
+    } else {
+      // Fallback: beep
+      var b2 = false;
+      function tick2() { if (expired()) { stopAllAudio(); return; } makeOsc(b2?880:660, 'square', 0, 0.28, 0.3); b2=!b2; }
+      tick2();
+      audioInterval = setInterval(tick2, 600);
+    }
+  }
+
+  // ═══════════════════ Audio: Custom MP3 ═══════════════════
+  function startCustomRingtone(ringtoneId, loop) {
+    stopAllAudio();
+    idbLoadRingtone(ringtoneId).then(function(record) {
+      if (!record) { startBuiltinRingtone('beep', 30000); return; }
+      var blob = new Blob([record.data], { type: record.mimeType || 'audio/mpeg' });
+      audioElementUrl = URL.createObjectURL(blob);
+      audioElement = new Audio(audioElementUrl);
+      audioElement.loop = !!loop;
+      audioElement.play().catch(function() {});
+      if (!loop) {
+        // For preview, stop after current play finishes
+        audioElement.onended = function() { stopAllAudio(); };
+      }
+      // Auto-stop after 30s if looping (alarm ringing)
+      if (loop) {
+        audioStopTime = Date.now() + 30000;
+        var check = setInterval(function() {
+          if (Date.now() >= audioStopTime || !audioElement) { clearInterval(check); stopAllAudio(); }
+        }, 1000);
+      }
+    }).catch(function() {
+      startBuiltinRingtone('beep', 30000);
+    });
+  }
+
+  // ═══════════════════ Audio: Unified ═══════════════════
+  function startRingtone(ringtoneId) {
+    stopAllAudio();
+    var info = getRingtoneInfo(ringtoneId);
+    if (!info) { startBuiltinRingtone('beep', 30000); return; }
+    if (info.type === 'builtin') {
+      startBuiltinRingtone(info.id, 30000);
+    } else {
+      startCustomRingtone(info.id, true);
+    }
+  }
+
+  function previewRingtone(ringtoneId) {
+    stopPreview();
+    // Don't interrupt a ringing alarm for a preview
+    if (ringingAlarmId) return;
+    stopAllAudio();
+    var info = getRingtoneInfo(ringtoneId);
+    if (!info) return;
+    previewActive = ringtoneId;
+    if (info.type === 'builtin') {
+      startBuiltinRingtone(info.id, 2500);
+      previewCleanup = function() { stopAllAudio(); };
+      setTimeout(function() { stopPreview(); }, 2500);
+    } else {
+      startCustomRingtone(info.id, false);
+      previewCleanup = function() { stopAllAudio(); };
+      // Auto-stop after 4s max
+      setTimeout(function() { stopPreview(); }, 4000);
+    }
+  }
+
+  // ═══════════════════ Alarm Actions ═══════════════════
+  function dismissAlarm(snooze) {
+    var alarm = alarms.find(function(a){ return a.id === ringingAlarmId; });
+    if (!alarm) return;
+    stopAllAudio();
+    $overlay.style.display = 'none';
+    document.querySelectorAll('.alarm-card').forEach(function(c){ c.classList.remove('ringing'); });
+
+    if (snooze) {
+      var now = new Date();
+      now.setMinutes(now.getMinutes() + 5);
+      if (!alarm.snoozeOrigin) alarm.snoozeOrigin = { hour:alarm.hour, minute:alarm.minute };
+      alarm.hour = now.getHours();
+      alarm.minute = now.getMinutes();
+      alarm.enabled = true;
+      showToast('已贪睡至 '+formatTime(alarm.hour, alarm.minute));
+    } else {
+      if (alarm.snoozeOrigin) {
+        alarm.hour = alarm.snoozeOrigin.hour;
+        alarm.minute = alarm.snoozeOrigin.minute;
+        alarm.snoozeOrigin = null;
+      }
+      if (alarm.repeat === 'none') alarm.enabled = false;
+    }
+    ringingAlarmId = null;
+    saveAlarms();
+    renderAlarms();
+  }
+
+  function triggerAlarm(alarm) {
+    if (ringingAlarmId) return;
+    ringingAlarmId = alarm.id;
+    $modalTime.textContent = formatTime(alarm.hour, alarm.minute);
+    $modalLabel.textContent = alarm.label || '闹钟';
+    var info = getRingtoneInfo(alarm.ringtoneId || 'beep');
+    $modalRingtone.textContent = info ? '铃声：'+info.name : '';
+    $overlay.style.display = 'flex';
+    startRingtone(alarm.ringtoneId || 'beep');
+    showNotification('⏰ 闹钟响了', alarm.label || formatTime(alarm.hour, alarm.minute));
+    renderAlarms();
+  }
+
+  // ═══════════════════ Alarm Checking ═══════════════════
+  function isWeekday(d) { var dd = d.getDay(); return dd >= 1 && dd <= 5; }
+
+  function checkAlarms() {
+    var now = new Date();
+    var h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+    if (s === 0) triggeredThisMinute = {};
+    if (ringingAlarmId) return;
+    for (var i = 0; i < alarms.length; i++) {
+      var a = alarms[i];
+      if (!a.enabled) continue;
+      if (a.hour !== h || a.minute !== m) continue;
+      if (triggeredThisMinute[a.id]) continue;
+      if (a.repeat === 'weekdays' && !isWeekday(now)) continue;
+      triggeredThisMinute[a.id] = true;
+      triggerAlarm(a);
+      break;
+    }
+  }
+
+  // ═══════════════════ Clock ═══════════════════
+  function updateClock() {
+    var now = new Date();
+    $clockTime.textContent = pad(now.getHours())+':'+pad(now.getMinutes())+':'+pad(now.getSeconds());
+    $clockDate.textContent = now.getFullYear()+'年'+(now.getMonth()+1)+'月'+now.getDate()+'日 '+DAY_NAMES[now.getDay()];
+  }
+
+  // ═══════════════════ Render Alarms ═══════════════════
+  function renderAlarms() {
+    var active = 0;
+    alarms.forEach(function(a){ if (a.enabled) active++; });
+    $listCount.textContent = active+'/'+alarms.length+' 个已开启';
+
+    if (alarms.length === 0) {
+      $alarmList.innerHTML = '<div class="empty-state"><span class="icon">⏰</span>还没有闹钟<br>在上面添加一个吧</div>';
+      return;
+    }
+
+    var sorted = alarms.slice().sort(function(a,b){
+      return a.hour !== b.hour ? a.hour - b.hour : a.minute - b.minute;
+    });
+
+    $alarmList.innerHTML = sorted.map(function(a){
+      var cls = 'alarm-card';
+      if (!a.enabled) cls += ' inactive';
+      if (a.id === ringingAlarmId) cls += ' ringing';
+
+      var meta = [];
+      if (a.repeat && a.repeat !== 'none') meta.push('<span class="badge">'+REPEAT_LABELS[a.repeat]+'</span>');
+      if (a.snoozeOrigin) meta.push('<span class="badge snoozed">已贪睡</span>');
+      var ri = getRingtoneInfo(a.ringtoneId || 'beep');
+      if (ri) meta.push('<span class="badge ringtone">'+ri.name+'</span>');
+
+      return '<div class="'+cls+'">'+
+        '<div class="alarm-time-display">'+formatTime(a.hour,a.minute)+'</div>'+
+        '<div class="alarm-info">'+
+          '<div class="alarm-label">'+(a.label||'闹钟')+'</div>'+
+          (meta.length ? '<div class="alarm-meta">'+meta.join('')+'</div>' : '')+
+        '</div>'+
+        '<label class="toggle"><input type="checkbox" '+(a.enabled?'checked':'')+' data-id="'+a.id+'" class="toggle-input"><span class="slider"></span></label>'+
+        '<button class="btn-icon" data-delete="'+a.id+'" title="删除">✕</button>'+
+      '</div>';
+    }).join('');
+
+    $alarmList.querySelectorAll('.toggle-input').forEach(function(inp){
+      inp.addEventListener('change', function(){
+        var id = this.dataset.id;
+        var alarm = alarms.find(function(a){ return a.id === id; });
+        if (alarm) {
+          alarm.enabled = this.checked;
+          if (!alarm.enabled && alarm.id === ringingAlarmId) dismissAlarm(false);
+          saveAlarms(); renderAlarms();
+        }
+      });
+    });
+    $alarmList.querySelectorAll('[data-delete]').forEach(function(btn){
+      btn.addEventListener('click', function(){
+        var id = this.dataset.delete;
+        if (alarms.find(function(a){ return a.id === id && a.id === ringingAlarmId; })) dismissAlarm(false);
+        alarms = alarms.filter(function(a){ return a.id !== id; });
+        saveAlarms(); renderAlarms();
+        showToast('已删除闹钟');
+      });
+    });
+  }
+
+  // ═══════════════════ Render Ringtone List ═══════════════════
+  function updateRingtoneListUI() {
+    var all = getAllRingtones();
+    $ringtoneList.innerHTML = all.map(function(r){
+      var isPlaying = previewActive === r.id;
+      return '<div class="ringtone-item'+(isPlaying?' playing':'')+'">'+
+        '<span class="rt-icon">'+r.icon+'</span>'+
+        '<span class="rt-name">'+r.name+'</span>'+
+        (r.type === 'builtin'
+          ? '<span class="rt-type">内置</span>'+
+            '<button class="btn-play'+(isPlaying?' playing':'')+'" data-preview="'+r.id+'">'+(isPlaying?'■':'▶')+'</button>'
+          : '<span class="rt-size" data-size-id="'+r.id+'"></span>'+
+            '<button class="btn-play'+(isPlaying?' playing':'')+'" data-preview="'+r.id+'">'+(isPlaying?'■':'▶')+'</button>'+
+            '<button class="btn-danger-sm" data-delrt="'+r.id+'">删除</button>'
+        )+
+      '</div>';
+    }).join('');
+
+    // Preview buttons
+    $ringtoneList.querySelectorAll('[data-preview]').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var id = this.dataset.preview;
+        if (previewActive === id) { stopPreview(); return; }
+        previewRingtone(id);
+        updateRingtoneListUI();
+      });
+    });
+
+    // Delete custom ringtone
+    $ringtoneList.querySelectorAll('[data-delrt]').forEach(function(btn){
+      btn.addEventListener('click', function(e){
+        e.stopPropagation();
+        var id = this.dataset.delrt;
+        // Remove from any alarms using it
+        alarms.forEach(function(a){ if (a.ringtoneId === id) a.ringtoneId = 'beep'; });
+        customRingtones = customRingtones.filter(function(r){ return r.id !== id; });
+        saveCustomRingtones();
+        idbDeleteRingtone(id).then(function(){
+          populateRingtoneSelect();
+          updateRingtoneListUI();
+          renderAlarms();
+          showToast('铃声已删除');
+        }).catch(function(){
+          populateRingtoneSelect();
+          updateRingtoneListUI();
+          renderAlarms();
+          showToast('铃声已删除');
+        });
+      });
+    });
+
+    // Load file sizes for custom ringtones
+    all.forEach(function(r){
+      if (r.type !== 'custom') return;
+      idbLoadRingtone(r.id).then(function(record){
+        if (record) {
+          var el = document.querySelector('[data-size-id="'+r.id+'"]');
+          if (el) el.textContent = formatSize(record.data.byteLength);
+        }
+      });
+    });
+  }
+
+  // ═══════════════════ Storage: Alarms ═══════════════════
+  function saveAlarms() {
+    localStorage.setItem('alarmClockAlarms', JSON.stringify(alarms));
+  }
+
+  function loadAlarms() {
+    try {
+      var raw = localStorage.getItem('alarmClockAlarms');
+      if (raw) alarms = JSON.parse(raw);
+    } catch(e) { alarms = []; }
+  }
+
+  // ═══════════════════ Storage: Custom Ringtone Metadata ═══════════════════
+  function saveCustomRingtones() {
+    localStorage.setItem('alarmClockCustomRingtones', JSON.stringify(customRingtones));
+  }
+
+  function loadCustomRingtones() {
+    try {
+      var raw = localStorage.getItem('alarmClockCustomRingtones');
+      if (raw) customRingtones = JSON.parse(raw);
+    } catch(e) { customRingtones = []; }
+  }
+
+  // ═══════════════════ Notifications ═══════════════════
+  function requestNotificationPermission() {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }
+
+  function showNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      new Notification(title, { body:body, icon:'🔔', tag:'alarm' });
+    }
+  }
+
+  // ═══════════════════ Add Alarm ═══════════════════
+  function addAlarm() {
+    var timeVal = $alarmTime.value;
+    if (!timeVal) { showToast('请选择时间'); return; }
+    var parts = timeVal.split(':');
+    var hour = parseInt(parts[0],10), minute = parseInt(parts[1],10);
+    var label = $alarmLabel.value.trim();
+    var repeat = $alarmRepeat.value;
+    var ringtoneId = $alarmRingtone.value || 'beep';
+
+    var dup = alarms.some(function(a){
+      return a.hour === hour && a.minute === minute && a.repeat === repeat && a.enabled;
+    });
+    if (dup) { showToast('该时间的闹钟已存在'); return; }
+
+    alarms.push({
+      id: genId(), hour:hour, minute:minute, label:label||'',
+      repeat:repeat, ringtoneId:ringtoneId, enabled:true, snoozeOrigin:null
+    });
+    saveAlarms(); renderAlarms();
+    $alarmLabel.value = '';
+    showToast('闹钟已添加 — '+formatTime(hour,minute));
+  }
+
+  // ═══════════════════ Upload MP3 ═══════════════════
+  function handleFileUpload(file) {
+    if (!file) return;
+    if (!file.type || file.type !== 'audio/mpeg') {
+      // Also accept files with .mp3 extension that might have wrong MIME
+      if (file.name.toLowerCase().slice(-4) !== '.mp3') {
+        showToast('仅支持 MP3 文件'); return;
+      }
+    }
+    if (file.size > 20 * 1024 * 1024) { showToast('文件不能超过 20 MB'); return; }
+
+    var name = file.name.replace(/\.mp3$/i, '');
+    var reader = new FileReader();
+    reader.onload = function() {
+      var id = genId();
+      idbSaveRingtone(id, name, reader.result, 'audio/mpeg').then(function(){
+        customRingtones.push({ id:id, name:name, mimeType:'audio/mpeg' });
+        saveCustomRingtones();
+        populateRingtoneSelect();
+        updateRingtoneListUI();
+        showToast('铃声 "'+name+'" 已添加');
+      }).catch(function(){
+        showToast('保存失败，请重试');
+      });
+    };
+    reader.onerror = function() { showToast('读取文件失败'); };
+    reader.readAsArrayBuffer(file);
+  }
+
+  // ═══════════════════ Init ═══════════════════
+  function init() {
+    // Migrate alarms without ringtoneId
+    alarms.forEach(function(a){ if (!a.ringtoneId) a.ringtoneId = 'beep'; });
+
+    // Verify custom ringtones still have data in IndexedDB
+    var verifyPromises = customRingtones.map(function(r){
+      return idbLoadRingtone(r.id).then(function(record){
+        if (!record) return r.id; // Missing data
+        return null;
+      }).catch(function(){ return r.id; });
+    });
+
+    Promise.all(verifyPromises).then(function(results){
+      var missing = results.filter(function(id){ return id !== null; });
+      if (missing.length > 0) {
+        customRingtones = customRingtones.filter(function(r){ return missing.indexOf(r.id) === -1; });
+        // Fix alarms referencing missing ringtones
+        alarms.forEach(function(a){ if (missing.indexOf(a.ringtoneId) !== -1) a.ringtoneId = 'beep'; });
+        saveCustomRingtones();
+        saveAlarms();
+      }
+      populateRingtoneSelect();
+      updateRingtoneListUI();
+      renderAlarms();
+    });
+
+    updateClock();
+    renderAlarms();
+
+    setInterval(function(){
+      updateClock();
+      checkAlarms();
+    }, 1000);
+  }
+
+  // ═══════════════════ Event Bindings ═══════════════════
+  $btnAdd.addEventListener('click', addAlarm);
+  $alarmTime.addEventListener('keydown', function(e){ if (e.key === 'Enter') addAlarm(); });
+  $btnStop.addEventListener('click', function(){ dismissAlarm(false); });
+  $btnSnooze.addEventListener('click', function(){ dismissAlarm(true); });
+  $overlay.addEventListener('click', function(e){ if (e.target === $overlay) dismissAlarm(false); });
+  document.addEventListener('click', requestNotificationPermission, { once:true });
+
+  // Ringtone section toggle
+  $ringtoneToggle.addEventListener('click', function(){
+    $ringtoneSection.classList.toggle('open');
+  });
+
+  // Upload
+  $btnUpload.addEventListener('click', function(){ $fileInput.click(); });
+  $fileInput.addEventListener('change', function(){
+    handleFileUpload($fileInput.files[0]);
+    $fileInput.value = '';
+    $uploadName.textContent = '未选择文件';
+  });
+
+  // ── Start ──
+  loadAlarms();
+  loadCustomRingtones();
+  init();
+})();
+</script>
+
+</body>
+</html>
