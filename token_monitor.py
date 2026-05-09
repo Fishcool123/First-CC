@@ -34,18 +34,21 @@ if sys.platform == "win32":
 CN_TZ = timezone(offset=timedelta(hours=8))
 USD_TO_CNY = 7.25  # 美元兑人民币汇率（浮动值，可手动更新）
 
-# 各模型近似价格（美元 / 百万 token）⚠️ 待验证: 基于公开定价估算
-MODEL_PRICING: Dict[str, Tuple[float, float]] = {
-    # (input_price, output_price) per 1M tokens
-    "deepseek-v4-pro": (0.14, 0.28),
-    "deepseek-v3": (0.07, 0.14),
-    "claude-opus-4-7": (15.0, 75.0),
-    "claude-sonnet-4-6": (3.0, 15.0),
-    "claude-haiku-4-5": (0.80, 4.0),
-    "qwen3.6-plus": (0.50, 1.50),
-    "qwen3.5-plus": (0.40, 1.20),
-    "qwen3-max": (0.80, 2.40),
-    "default": (1.0, 2.0),
+# 各模型价格（人民币 / 百万 token）
+# 格式: (input_price, cache_hit_price, output_price) per 1M tokens
+# 数据来源: DeepSeek 官方 API 定价页（2026-05-09 折扣价）
+# https://api-docs.deepseek.com/zh-cn/quick_start/pricing
+MODEL_PRICING_CNY: Dict[str, Tuple[float, float, float]] = {
+    "deepseek-v4-pro":     (3.0,  0.025, 6.0),    # 原价 12/0.1/24，限时2.5折至5月底
+    "deepseek-v3":          (0.5,  0.05,  1.1),    # V3.2 定价
+    "deepseek-v4-flash":    (1.0,  0.02,  2.0),    # V4 Flash
+    "claude-opus-4-7":      (108.0, 10.8, 540.0),  # $15/$1.5/$75 × 7.2
+    "claude-sonnet-4-6":    (21.6,  2.16, 108.0),  # $3/$0.3/$15 × 7.2
+    "claude-haiku-4-5":     (5.76,  0.58, 28.8),   # $0.8/$0.08/$4 × 7.2
+    "qwen3.6-plus":         (2.9,   0.29,  8.7),   # ¥0.4/¥0.04/¥1.2 per 1K → scaled to 1M
+    "qwen3.5-plus":         (2.9,   0.29,  8.7),
+    "qwen3-max":            (5.8,   0.58,  17.4),
+    "default":              (7.2,   0.72,  14.4),   # 默认 $1/$0.1/$2
 }
 
 
@@ -55,8 +58,7 @@ MODEL_PRICING: Dict[str, Tuple[float, float]] = {
 
 def get_claude_home() -> Path:
     """获取 Claude Code 配置目录路径。"""
-    return Path(os.environ.get("CLAUDE_HOME",
-               os.path.expandvars(r"%USERPROFILE%\.claude")))
+    return Path(os.environ.get("CLAUDE_HOME", Path.home() / ".claude"))
 
 
 def project_dir_to_key(project_path: str) -> str:
@@ -114,25 +116,25 @@ def parse_session_tokens(jsonl_path: Path) -> Dict[str, Any]:
                 except json.JSONDecodeError:
                     continue
 
-                if d.get("type") != "assistant":
-                    # 也尝试从 user 事件的 timestamp 获取 first_ts
-                    if d.get("type") == "user" and not first_ts:
-                        ts = d.get("timestamp", "")
-                        if ts:
-                            first_ts = ts
+                msg_type = d.get("type")
+                ts = d.get("timestamp", "")
+
+                if msg_type != "assistant":
+                    if msg_type == "user" and not first_ts and ts:
+                        first_ts = ts
                     continue
 
                 msg_count += 1
-                usage = d.get("message", {}).get("usage", {})
+                msg_body = d.get("message", {})
+                usage = msg_body.get("usage", {})
                 total_in += usage.get("input_tokens", 0)
                 total_out += usage.get("output_tokens", 0)
                 total_cache_read += usage.get("cache_read_input_tokens", 0)
                 total_cache_create += usage.get("cache_creation_input_tokens", 0)
 
                 if not model:
-                    model = d.get("message", {}).get("model", "")
+                    model = msg_body.get("model", "")
 
-                ts = d.get("timestamp", "")
                 if ts:
                     if not first_ts:
                         first_ts = ts
@@ -177,28 +179,65 @@ def format_cny(yuan: float) -> str:
     return f"¥{yuan:.2f}"
 
 
-def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
-    """估算 token 费用（美元）。"""
-    prices = MODEL_PRICING.get(model, MODEL_PRICING["default"])
-    return (input_tokens / 1_000_000) * prices[0] + \
-           (output_tokens / 1_000_000) * prices[1]
+def estimate_cost_cny(
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_hit_tokens: int = 0,
+) -> float:
+    """
+    估算 token 费用（人民币）。
+    区分输入、缓存命中、输出三种计费项。
+    """
+    prices = MODEL_PRICING_CNY.get(model, MODEL_PRICING_CNY["default"])
+    price_in, price_cache, price_out = prices
+    cost_in = (input_tokens / 1_000_000) * price_in
+    cost_cache = (cache_hit_tokens / 1_000_000) * price_cache
+    cost_out = (output_tokens / 1_000_000) * price_out
+    return cost_in + cost_cache + cost_out
 
 
-def estimate_cost_cny(model: str, input_tokens: int, output_tokens: int) -> float:
-    """估算 token 费用（人民币）。"""
-    return estimate_cost_usd(model, input_tokens, output_tokens) * USD_TO_CNY
+def _normalize_ts(ts_str: str) -> str:
+    """将 ISO 时间戳中的 Z 后缀替换为 +00:00 以便 fromisoformat 解析。"""
+    return ts_str[:-1] + "+00:00" if ts_str.endswith("Z") else ts_str
 
 
 def ts_to_date(ts_str: str) -> str:
     """ISO 时间戳转日期字符串（北京时间）。"""
     try:
-        if ts_str.endswith("Z"):
-            ts_str = ts_str[:-1] + "+00:00"
-        dt = datetime.fromisoformat(ts_str)
+        dt = datetime.fromisoformat(_normalize_ts(ts_str))
         dt_cn = dt.astimezone(CN_TZ)
         return dt_cn.strftime("%Y-%m-%d")
     except (ValueError, TypeError):
         return "未知"
+
+
+# ============================================================================
+# 状态栏缓存（避免每次刷新都解析全部 JSONL 文件）
+# ============================================================================
+
+def _cache_path(project_dir: str) -> Path:
+    key = project_dir_to_key(project_dir)
+    return get_claude_home() / "projects" / key / ".token_cache.json"
+
+
+def _load_grand_total_cache(project_dir: str) -> Optional[Dict[str, Any]]:
+    try:
+        p = _cache_path(project_dir)
+        if p.exists():
+            return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def _save_grand_total_cache(project_dir: str, cache_key: Any, value: int) -> None:
+    try:
+        p = _cache_path(project_dir)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"key": cache_key, "value": value}), encoding="utf-8")
+    except OSError:
+        pass
 
 
 # ============================================================================
@@ -241,12 +280,22 @@ def statusline_output() -> None:
     current = parse_session_tokens(jsonl_files[0])
     cur_total = current["total_in"] + current["total_out"]
 
-    # 全部会话合计
-    grand_total = 0
-    for f in jsonl_files:
-        # 快速聚合（不逐个完整解析以节省时间）
-        s = parse_session_tokens(f)
-        grand_total += s["total_in"] + s["total_out"]
+    # 全部会话合计（当前会话 + 缓存的历史合计）
+    grand_total = cur_total
+    if len(jsonl_files) > 1:
+        # 检查缓存是否有效（基于文件最后修改时间）
+        cache_key = tuple((f.name, f.stat().st_mtime) for f in jsonl_files[1:])
+        cached = _load_grand_total_cache(project_dir)
+        if cached and cached.get("key") == cache_key:
+            grand_total += cached["value"]
+        else:
+            # 缓存失效，重新计算
+            historical = 0
+            for f in jsonl_files[1:]:
+                s = parse_session_tokens(f)
+                historical += s["total_in"] + s["total_out"]
+            _save_grand_total_cache(project_dir, cache_key, historical)
+            grand_total += historical
 
     # 缓存命中率（当前会话）
     cache_hit = current["total_cache_read"]
@@ -293,9 +342,7 @@ def report_output(project_dir: str, days: Optional[int] = None) -> None:
         # 时间过滤
         if days and s["first_ts"]:
             try:
-                ts = s["first_ts"]
-                if ts.endswith("Z"):
-                    ts = ts[:-1] + "+00:00"
+                ts = _normalize_ts(s["first_ts"])
                 dt = datetime.fromisoformat(ts)
                 if dt < cutoff:
                     continue
@@ -318,11 +365,13 @@ def report_output(project_dir: str, days: Optional[int] = None) -> None:
     # 模型使用分布
     model_counter: Dict[str, int] = defaultdict(int)
     model_tokens: Dict[str, Tuple[int, int]] = defaultdict(lambda: (0, 0))
+    model_cache: Dict[str, int] = defaultdict(int)
     for s in sessions:
         m = s["model"] or "unknown"
         model_counter[m] += 1
         prev_in, prev_out = model_tokens[m]
         model_tokens[m] = (prev_in + s["total_in"], prev_out + s["total_out"])
+        model_cache[m] += s["total_cache_read"]
 
     # 每日统计
     daily_tokens: Dict[str, int] = defaultdict(int)
@@ -354,10 +403,11 @@ def report_output(project_dir: str, days: Optional[int] = None) -> None:
     if grand_cache_create:
         print(f"  缓存写入       : {grand_cache_create:>12,}")
 
-    # 费用估算
+    # 费用估算（含缓存命中折扣）
     total_cost_cny = 0.0
     for m, (m_in, m_out) in model_tokens.items():
-        total_cost_cny += estimate_cost_cny(m, m_in, m_out)
+        m_cache = model_cache.get(m, 0)
+        total_cost_cny += estimate_cost_cny(m, m_in, m_out, m_cache)
     print(f"  估算费用 (CNY) : {format_cny(total_cost_cny):>12}")
 
     # 2. 模型分布
@@ -369,7 +419,7 @@ def report_output(project_dir: str, days: Optional[int] = None) -> None:
     for m, count in model_counter.items():
         m_in, m_out = model_tokens[m]
         m_total = m_in + m_out
-        m_cost = estimate_cost_cny(m, m_in, m_out)
+        m_cost = estimate_cost_cny(m, m_in, m_out, model_cache.get(m, 0))
         print(f"  {m:<25s} {count:>5d}  {format_tokens(m_in):>10s}  "
               f"{format_tokens(m_out):>10s}  {format_tokens(m_total):>10s}  {format_cny(m_cost):>10s}")
 

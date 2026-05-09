@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
-import os
 import re
 import sys
 import textwrap
@@ -50,15 +49,8 @@ except ImportError:
 # 文件名中不允许的字符（Windows 文件系统）
 ILLEGAL_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|#\x00-\x1f]')
 
-# 中文字符范围（用于判断标题是否为纯英文）
-CJK_RANGE = re.compile(r'[一-鿿㐀-䶿豈-﫿]')
-
 # 用户消息最小有效长度（字符数）
 MIN_USER_MSG_LENGTH: int = 10
-
-# 时间戳偏移量（Qwen Studio 使用自1970-01-01的秒数）
-# 经验证为标准 Unix 时间戳
-EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 # 北京时间时区
 CN_TZ = timezone(offset=timedelta(hours=8))
@@ -317,50 +309,34 @@ def extract_decisions(text: str) -> List[str]:
     return decisions
 
 
-def extract_thinking_titles(content_list: List[Dict]) -> List[str]:
-    """从 content_list 中提取所有思考标题。"""
-    titles: List[str] = []
+def _extract_thinking_field(content_list: List[Dict], field: str) -> List[str]:
+    """从 content_list 的 thinking_summary 阶段提取指定字段内容。"""
+    results: List[str] = []
     for item in safe_list(content_list):
         phase = item.get('phase', '')
         if phase == 'thinking_summary':
-            st = item.get('extra', {}).get('summary_title', {})
+            st = item.get('extra', {}).get(field, {})
             for t in safe_list(st.get('content', [])):
                 t_str = safe_str(t).strip()
                 if t_str:
-                    titles.append(t_str)
-        # 也检查非思考阶段的 summary_title
+                    results.append(t_str)
         extra = item.get('extra')
-        if extra and isinstance(extra, dict):
-            st = extra.get('summary_title', {})
-            if st and phase != 'thinking_summary':
+        if extra and isinstance(extra, dict) and phase != 'thinking_summary':
+            st = extra.get(field, {})
+            if st:
                 for t in safe_list(st.get('content', [])):
                     t_str = safe_str(t).strip()
                     if t_str:
-                        titles.append(t_str)
-    return titles
+                        results.append(t_str)
+    return results
+
+
+def extract_thinking_titles(content_list: List[Dict]) -> List[str]:
+    return _extract_thinking_field(content_list, 'summary_title')
 
 
 def extract_thinking_content(content_list: List[Dict]) -> List[str]:
-    """从 content_list 中提取所有 AI 思考过程内容。"""
-    thoughts: List[str] = []
-    for item in safe_list(content_list):
-        phase = item.get('phase', '')
-        if phase == 'thinking_summary':
-            st = item.get('extra', {}).get('summary_thought', {})
-            for t in safe_list(st.get('content', [])):
-                t_str = safe_str(t).strip()
-                if t_str:
-                    thoughts.append(t_str)
-        # 也检查其他阶段的 summary_thought
-        extra = item.get('extra')
-        if extra and isinstance(extra, dict):
-            st = extra.get('summary_thought', {})
-            if st and phase != 'thinking_summary':
-                for t in safe_list(st.get('content', [])):
-                    t_str = safe_str(t).strip()
-                    if t_str:
-                        thoughts.append(t_str)
-    return thoughts
+    return _extract_thinking_field(content_list, 'summary_thought')
 
 
 def extract_answers(content_list: List[Dict]) -> List[str]:
@@ -397,6 +373,7 @@ def parse_messages(messages_dict: Dict[str, Dict]) -> List[Dict[str, Any]]:
         ts = msg.get('timestamp')
         model = msg.get('model', '') or ''
         model_name = msg.get('modelName', '') or ''
+        model_display = model_name or model  # 优先用显示名
 
         # 用户消息：直接读取 content
         thinking_titles: List[str] = []
@@ -427,8 +404,7 @@ def parse_messages(messages_dict: Dict[str, Dict]) -> List[Dict[str, Any]]:
             'id': msg_id,
             'role': role,
             'content': content,
-            'model': model,
-            'model_name': model_name,
+            'model_display': model_display,
             'timestamp': ts,
             'thinking_titles': thinking_titles,
             'thinking_content': thinking_content,
@@ -477,19 +453,16 @@ def classify_conversation(title: str, user_messages: List[str],
 
 
 def detect_duplicates(conversations: List[Dict[str, Any]],
-                       threshold: float = 0.8) -> Dict[str, List[int]]:
+                       threshold: float = 0.8) -> Tuple[Dict[str, List[int]], Dict[int, Optional[int]]]:
     """
     基于标题文本相似度检测重复对话。
-
-    参数：
-        conversations: 已解析的对话列表
-        threshold: 相似度阈值（默认 0.8）
-    返回：
-        {representative_title: [indices...]} 重复组映射
+    返回:
+        (groups_map, index_map)
+        - groups_map: {representative_title: [indices...]}
+        - index_map: {index: first_dup_partner_index_or_None}  用于 O(1) 查重
     """
     n = len(conversations)
     titles = [c.get('title', '') for c in conversations]
-    # Union-Find 分组
     parent = list(range(n))
 
     def find(x: int) -> int:
@@ -503,7 +476,6 @@ def detect_duplicates(conversations: List[Dict[str, Any]],
         if px != py:
             parent[px] = py
 
-    # 两两比较（302 个对话，约 4.5 万对，可接受）
     for i in range(n):
         for j in range(i + 1, n):
             if find(i) == find(j):
@@ -512,37 +484,35 @@ def detect_duplicates(conversations: List[Dict[str, Any]],
             if sim >= threshold:
                 union(i, j)
 
-    # 分组收集
     groups: Dict[int, List[int]] = defaultdict(list)
     for i in range(n):
         groups[find(i)].append(i)
 
-    # 过滤掉单元素组
-    result: Dict[str, List[int]] = {}
+    groups_map: Dict[str, List[int]] = {}
+    index_map: Dict[int, Optional[int]] = {}
     for root, members in groups.items():
         if len(members) > 1:
-            # 用最短标题作为代表
             rep_idx = min(members, key=lambda i: len(titles[i]))
-            result[titles[rep_idx]] = sorted(members)
+            members_sorted = sorted(members)
+            groups_map[titles[rep_idx]] = members_sorted
+            # 每个成员指向组内第一个不同的成员
+            for m in members_sorted:
+                others = [x for x in members_sorted if x != m]
+                index_map[m] = others[0] if others else None
 
-    return result
+    return groups_map, index_map
 
 
 # ============================================================================
 # Markdown 生成
 # ============================================================================
 
-def escape_md_table(text: str) -> str:
-    """转义 Markdown 表格中的特殊字符。"""
-    return text.replace('|', '\\|').replace('\n', '<br>')
-
-
 def generate_conversation_md(
     conv: Dict[str, Any],
     index: int,
     total: int,
     output_dir: Path,
-    duplicate_groups: Dict[str, List[int]],
+    dup_index_map: Dict[int, Optional[int]],
     privacy: bool = False,
     extract_code: bool = False,
     extract_decisions_flag: bool = False,
@@ -559,25 +529,12 @@ def generate_conversation_md(
     messages = conv.get('_parsed_messages', [])
     category = conv.get('_category', '其他')
 
-    # 查找重复标记
-    is_duplicate = False
-    dup_of: Optional[int] = None
-    for rep_title, members in duplicate_groups.items():
-        if index in members:
-            is_duplicate = True
-            non_self = [m for m in members if m != index]
-            if non_self:
-                dup_of = non_self[0]
-            break
+    # 查找重复标记（使用预计算索引映射，O(1)）
+    is_duplicate = index in dup_index_map
+    dup_of = dup_index_map.get(index)
 
-    # 收集模型列表
-    models_used: List[str] = []
-    seen_models: Set[str] = set()
-    for msg in messages:
-        m = msg.get('model_name') or msg.get('model') or ''
-        if m and m not in seen_models:
-            models_used.append(m)
-            seen_models.add(m)
+    # 模型列表（已在预处理阶段计算）
+    models_used = conv.get('_models', [])
 
     # 文件名
     safe_title = sanitize_filename(title)
@@ -611,7 +568,7 @@ def generate_conversation_md(
     for msg in messages:
         role = msg['role']
         ts = timestamp_to_str(msg['timestamp'])
-        model = msg.get('model_name') or msg.get('model') or ''
+        model = msg.get('model_display', '')
 
         if role == 'user':
             turn_num += 1
@@ -712,7 +669,8 @@ def generate_conversation_md(
 
 
 def generate_index(conversations: List[Dict[str, Any]],
-                   duplicate_groups: Dict[str, List[int]],
+                   groups_map: Dict[str, List[int]],
+                   dup_index_map: Dict[int, Optional[int]],
                    output_dir: Path) -> Path:
     """生成可点击的对话列表索引 index.md。"""
     filepath = output_dir / "index.md"
@@ -757,11 +715,7 @@ def generate_index(conversations: List[Dict[str, Any]],
             msg_count = len(conv.get('_parsed_messages', []))
 
             # 重复标记
-            flags = ""
-            for rep_title, members in duplicate_groups.items():
-                if idx in members:
-                    flags = "⚠️ 重复"
-                    break
+            flags = "⚠️ 重复" if idx in dup_index_map else ""
 
             lines.append(f"| {file_num:03d} | {link} | {model_str} | {time_str} | {msg_count} | {flags} |")
         lines.append("")
@@ -809,7 +763,7 @@ def generate_statistics(conversations: List[Dict[str, Any]],
                 total_user_msgs += 1
             elif msg['role'] == 'assistant':
                 total_assistant_msgs += 1
-            m = msg.get('model_name') or msg.get('model') or ''
+            m = msg.get('model_display', '')
             if m:
                 model_counter[m] += 1
             if msg['thinking_content']:
@@ -1064,7 +1018,7 @@ def process_conversations(data: Dict[str, Any], args: argparse.Namespace) -> \
 
     iterator = enumerate(raw_conversations)
     if HAS_TQDM:
-        iterator = tqdm(list(iterator), desc="解析进度", unit="对话", ncols=80)
+        iterator = tqdm(iterator, total=total, desc="解析进度", unit="对话", ncols=80) if HAS_TQDM else iterator
 
     for i, conv in iterator:
         if not isinstance(conv, dict):
@@ -1095,7 +1049,7 @@ def process_conversations(data: Dict[str, Any], args: argparse.Namespace) -> \
         models: List[str] = []
         seen: Set[str] = set()
         for msg in parsed_msgs:
-            m = msg.get('model_name') or msg.get('model') or ''
+            m = msg.get('model_display', '')
             if m and m not in seen:
                 models.append(m)
                 seen.add(m)
@@ -1115,18 +1069,18 @@ def process_conversations(data: Dict[str, Any], args: argparse.Namespace) -> \
 
     # 重复检测
     print(f"🔍 正在进行重复检测（阈值: {args.dup_threshold}）...")
-    duplicate_groups = detect_duplicates(conversations, threshold=args.dup_threshold)
-    dup_count = sum(len(v) for v in duplicate_groups.values())
-    if duplicate_groups:
-        print(f"⚠️  发现 {len(duplicate_groups)} 组疑似重复（共 {dup_count} 个对话）")
+    groups_map, index_map = detect_duplicates(conversations, threshold=args.dup_threshold)
+    dup_count = sum(len(v) for v in groups_map.values())
+    if groups_map:
+        print(f"⚠️  发现 {len(groups_map)} 组疑似重复（共 {dup_count} 个对话）")
         if args.verbose:
-            for rep_title, members in duplicate_groups.items():
+            for rep_title, members in groups_map.items():
                 member_str = ', '.join(f"#{m}" for m in members)
                 print(f"   · [{rep_title}] → {member_str}")
     else:
         print("✅ 未发现疑似重复对话")
 
-    return conversations, duplicate_groups
+    return conversations, groups_map, index_map
 
 
 def main() -> None:
@@ -1142,7 +1096,7 @@ def main() -> None:
     data = load_json(args.input)
 
     # 2. 解析处理
-    conversations, duplicate_groups = process_conversations(data, args)
+    conversations, groups_map, index_map = process_conversations(data, args)
 
     # 3. 按分类过滤
     if args.category:
@@ -1165,7 +1119,7 @@ def main() -> None:
         total = len(conversations)
         iterator = enumerate(conversations)
         if HAS_TQDM:
-            iterator = tqdm(list(iterator), desc="生成文件", unit="个", ncols=80)
+            iterator = tqdm(iterator, total=total, desc="生成文件", unit="个", ncols=80) if HAS_TQDM else iterator
 
         for i, conv in iterator:
             generate_conversation_md(
@@ -1173,7 +1127,7 @@ def main() -> None:
                 index=i + 1,
                 total=total,
                 output_dir=output_dir,
-                duplicate_groups=duplicate_groups,
+                dup_index_map=index_map,
                 privacy=args.privacy,
                 extract_code=args.extract_code,
                 extract_decisions_flag=args.extract_decisions,
@@ -1182,7 +1136,7 @@ def main() -> None:
 
     # 6. 生成索引
     print(f"📑 正在生成索引文件...")
-    generate_index(conversations, duplicate_groups, output_dir)
+    generate_index(conversations, groups_map, index_map, output_dir)
     print(f"✅ index.md → {output_dir / 'index.md'}")
 
     # 7. 生成统计报告
@@ -1196,7 +1150,7 @@ def main() -> None:
     print("  处理完成！")
     print("=" * 60)
     print(f"  对话总数       : {len(conversations)}")
-    print(f"  重复组数       : {len(duplicate_groups)}")
+    print(f"  重复组数       : {len(groups_map)}")
     print(f"  输出目录       : {output_dir.resolve()}")
     print(f"  隐私过滤       : {'开启' if args.privacy else '关闭'}")
     print(f"  代码提取       : {'开启' if args.extract_code else '关闭'}")
