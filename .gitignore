@@ -10,6 +10,9 @@ chat-export-*.json
 # Generated output
 output/
 
+# Python cache
+__pycache__/
+
 # System files
 Thumbs.db
 Desktop.ini
