@@ -32,6 +32,7 @@ if sys.platform == "win32":
 
 # ---------- 常量 ----------
 CN_TZ = timezone(offset=timedelta(hours=8))
+USD_TO_CNY = 7.25  # 美元兑人民币汇率（浮动值，可手动更新）
 
 # 各模型近似价格（美元 / 百万 token）⚠️ 待验证: 基于公开定价估算
 MODEL_PRICING: Dict[str, Tuple[float, float]] = {
@@ -167,20 +168,25 @@ def format_tokens(n: int) -> str:
     return str(n)
 
 
-def format_price(usd: float) -> str:
-    """价格格式化。"""
-    if usd < 0.01:
-        return f"${usd:.4f}"
-    elif usd < 1:
-        return f"${usd:.2f}"
-    return f"${usd:.2f}"
+def format_cny(yuan: float) -> str:
+    """人民币价格格式化。"""
+    if yuan < 0.01:
+        return f"¥{yuan:.4f}"
+    elif yuan < 1:
+        return f"¥{yuan:.2f}"
+    return f"¥{yuan:.2f}"
 
 
-def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+def estimate_cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:
     """估算 token 费用（美元）。"""
     prices = MODEL_PRICING.get(model, MODEL_PRICING["default"])
     return (input_tokens / 1_000_000) * prices[0] + \
            (output_tokens / 1_000_000) * prices[1]
+
+
+def estimate_cost_cny(model: str, input_tokens: int, output_tokens: int) -> float:
+    """估算 token 费用（人民币）。"""
+    return estimate_cost_usd(model, input_tokens, output_tokens) * USD_TO_CNY
 
 
 def ts_to_date(ts_str: str) -> str:
@@ -349,22 +355,23 @@ def report_output(project_dir: str, days: Optional[int] = None) -> None:
         print(f"  缓存写入       : {grand_cache_create:>12,}")
 
     # 费用估算
-    total_cost = 0.0
+    total_cost_cny = 0.0
     for m, (m_in, m_out) in model_tokens.items():
-        total_cost += estimate_cost(m, m_in, m_out)
-    print(f"  估算费用 (USD) : {format_price(total_cost):>12}")
+        total_cost_cny += estimate_cost_cny(m, m_in, m_out)
+    print(f"  估算费用 (CNY) : {format_cny(total_cost_cny):>12}")
 
     # 2. 模型分布
     print(f"\n{'─'*50}")
     print("  2. 模型使用分布")
     print(f"{'─'*50}")
-    print(f"  {'模型':<25s} {'次数':>5s}  {'输入':>10s}  {'输出':>10s}  {'合计':>10s}")
-    print(f"  {'─'*25} {'─'*5} {'─'*10} {'─'*10} {'─'*10}")
+    print(f"  {'模型':<25s} {'次数':>5s}  {'输入':>10s}  {'输出':>10s}  {'合计':>10s}  {'费用(CNY)':>10s}")
+    print(f"  {'─'*25} {'─'*5} {'─'*10} {'─'*10} {'─'*10} {'─'*10}")
     for m, count in model_counter.items():
         m_in, m_out = model_tokens[m]
         m_total = m_in + m_out
+        m_cost = estimate_cost_cny(m, m_in, m_out)
         print(f"  {m:<25s} {count:>5d}  {format_tokens(m_in):>10s}  "
-              f"{format_tokens(m_out):>10s}  {format_tokens(m_total):>10s}")
+              f"{format_tokens(m_out):>10s}  {format_tokens(m_total):>10s}  {format_cny(m_cost):>10s}")
 
     # 3. 每日统计
     print(f"\n{'─'*50}")
