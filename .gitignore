@@ -4,6 +4,12 @@
 # Music files (not part of project)
 87383/
 
+# Chat export data (large files)
+chat-export-*.json
+
+# Generated output
+output/
+
 # System files
 Thumbs.db
 Desktop.ini
