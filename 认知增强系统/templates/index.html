@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<!-- index.html — 认知增强系统 v2 — 极简 / 留白 / 圆角 -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>认知增强系统</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=20260511c">
+    <script src="/static/js/vue.global.prod.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1/Sortable.min.js"></script>
+</head>
+<body>
+<div id="app">
+{% raw %}
+    <div class="app-shell">
+
+        <!-- ══════════ 侧边栏 — Notion 风格宽导航 ══════════ -->
+        <nav class="sidebar">
+            <div class="sidebar-brand">认知增强系统</div>
+
+            <div class="sidebar-section-label">功能</div>
+            <ul class="sidebar-tabs">
+                <li class="sidebar-tab" :class="{ active: currentTab === 'tasks' }"
+                    @click="switchTab('tasks')">
+                    <span class="tab-icon">&#x1F4CB;</span>
+                    <span class="tab-label">任务助理</span>
+                </li>
+                <li class="sidebar-tab" :class="{ active: currentTab === 'slices' }"
+                    @click="switchTab('slices')">
+                    <span class="tab-icon">&#x23F1;</span>
+                    <span class="tab-label">时间切片</span>
+                </li>
+                <li class="sidebar-tab" :class="{ active: currentTab === 'settings' }"
+                    @click="switchTab('settings')">
+                    <span class="tab-icon">&#x2699;</span>
+                    <span class="tab-label">设置</span>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <button class="btn btn-sm sidebar-btn" @click="popupMode" title="弹出为独立窗口">弹出窗口</button>
+            </div>
+        </nav>
+
+        <!-- ══════════ 内容区 ══════════ -->
+        <div class="content-area">
+
+            <!-- ──────── 任务标签页 ──────── -->
+            <div v-if="currentTab === 'tasks'" class="tab-page">
+                <header class="topbar">
+                    <h1>任务助理</h1>
+                    <div class="topbar-actions">
+                        <button class="btn btn-sm" @click="requestNotification" :disabled="notifyGranted">
+                            {{ notifyGranted ? '✓ 已开启' : '开启通知' }}
+                        </button>
+                    </div>
+                </header>
+                <main class="main-grid">
+                    <!-- 左栏：新增任务 + 可用时段 -->
+                    <aside class="panel panel-left">
+                        <section class="card">
+                            <h2>新增任务</h2>
+                            <div class="form-group">
+                                <label>任务名称</label>
+                                <input v-model="taskForm.title" type="text" placeholder="输入任务名称…" @keyup.enter="submitTask">
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>优先级</label>
+                                    <select v-model.number="taskForm.priority">
+                                        <option :value="1">&#x2605; 最高</option>
+                                        <option :value="2">&#x2605; 较高</option>
+                                        <option :value="3" selected>&#x2605; 普通</option>
+                                        <option :value="4">&#x2605; 较低</option>
+                                        <option :value="5">&#x2605; 最低</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>预估时长（分钟）</label>
+                                    <input v-model.number="taskForm.estimated_minutes" type="number" min="1" max="480" placeholder="30">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>截止时间（可选）</label>
+                                <input v-model="taskForm.deadline" type="datetime-local">
+                            </div>
+                            <button class="btn btn-primary btn-block" @click="submitTask">添加任务</button>
+                        </section>
+                        <section class="card">
+                            <h2>可用时段</h2>
+                            <div v-if="availabilities.length === 0" class="empty-state" style="padding:16px 8px">
+                                暂无可用时段 — 点击下方添加
+                            </div>
+                            <div v-for="avail in availabilities" :key="avail.id" class="avail-row">
+                                <input v-model="avail.label" type="text" class="input-sm" style="width:50px" @change="saveAvail(avail)">
+                                <input v-model="avail.start_time" type="time" class="input-sm" style="width:95px" @change="saveAvail(avail)">
+                                <span style="color:var(--text-muted)">—</span>
+                                <input v-model="avail.end_time" type="time" class="input-sm" style="width:95px" @change="saveAvail(avail)">
+                                <button class="btn btn-sm btn-danger" @click="deleteAvail(avail.id)" title="删除">&#x2715;</button>
+                            </div>
+                            <button class="btn btn-sm" @click="addAvail">+ 添加时段</button>
+                        </section>
+                    </aside>
+
+                    <!-- 中栏：排程 -->
+                    <section class="panel panel-center">
+                        <div class="card">
+                            <h2>今日排程 <span class="badge">{{ scheduled.length }}</span></h2>
+                            <div v-if="scheduled.length === 0" class="empty-state">
+                                暂无排程<br>
+                                <span style="font-size:12px;color:var(--text-muted)">添加任务并设置可用时段，点击「重新排程」</span>
+                            </div>
+                            <ul v-else class="schedule-list">
+                                <li v-for="(item, idx) in scheduled" :key="idx" class="schedule-item"
+                                    :style="{ animationDelay: idx * 40 + 'ms' }">
+                                    <span class="sched-time">{{ item.start }} – {{ item.end }}</span>
+                                    <span class="sched-slot-tag">{{ item.slot_label }}</span>
+                                    <span v-if="item.is_manual" class="sched-manual-tag" title="手动分配">手</span>
+                                    <span class="sched-title">{{ item.task.title }}</span>
+                                    <span class="sched-prio">{{ '&#x2605;'.repeat(6 - item.task.priority) }}</span>
+                                    <span class="sched-dur">{{ item.task.estimated_minutes }}min</span>
+                                    <button v-if="item.is_manual" class="btn btn-sm btn-danger"
+                                            @click="removeScheduleItem(item.id)" title="退回未排程">&#x2715;</button>
+                                </li>
+                            </ul>
+                            <button class="btn btn-primary btn-block" @click="refreshSchedule" :disabled="loading">
+                                {{ loading ? '排程中…' : '重新排程' }}
+                            </button>
+                        </div>
+                        <div v-if="unscheduled.length > 0" class="card card-warning">
+                            <h3>未能排程（{{ unscheduled.length }}）— 可手动分配</h3>
+                            <ul class="task-list">
+                                <li v-for="task in unscheduled" :key="task.id" class="task-item"
+                                    :data-prio="task.priority">
+                                    <div class="task-body">
+                                        <div class="task-title">{{ task.title }}</div>
+                                        <div class="task-meta">
+                                            <span class="prio" :class="'prio-' + task.priority">{{ '&#x2605;'.repeat(6 - task.priority) }}</span>
+                                            <span>{{ task.estimated_minutes }}min</span>
+                                            <span v-if="task.deadline" class="deadline" :class="{ 'deadline-soon': isSoon(task.deadline) }">
+                                                {{ formatDeadline(task.deadline) }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" @click="openAssign(task)">分配</button>
+                                </li>
+                            </ul>
+                        </div>
+                    </section>
+
+                    <!-- 右栏：待办列表 -->
+                    <section class="panel panel-right">
+                        <div class="card">
+                            <h2>待办列表 <span class="badge">{{ pendingTasks.length }}</span></h2>
+                            <div v-if="pendingTasks.length === 0" class="empty-state">暂无待办任务</div>
+                            <ul ref="sortableList" v-else class="task-list">
+                                <li v-for="task in pendingTasks" :key="task.id" class="task-item"
+                                    :class="{ 'task-dragging': dragId === task.id }"
+                                    :data-prio="task.priority"
+                                    :style="{ animationDelay: (pendingTasks.indexOf(task) * 30) + 'ms' }">
+                                    <span class="drag-handle" title="拖拽排序">&#x2807;</span>
+                                    <div class="task-body">
+                                        <div class="task-title">{{ task.title }}</div>
+                                        <div class="task-meta">
+                                            <span class="prio" :class="'prio-' + task.priority">{{ '&#x2605;'.repeat(6 - task.priority) }}</span>
+                                            <span>{{ task.estimated_minutes }}min</span>
+                                            <span v-if="task.deadline" class="deadline" :class="{ 'deadline-soon': isSoon(task.deadline) }">
+                                                {{ formatDeadline(task.deadline) }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="task-actions">
+                                        <button class="btn btn-sm" @click="openEdit(task)" title="编辑">&#x270E;</button>
+                                        <button class="btn btn-sm btn-success" @click="markDone(task.id)" title="完成">&#x2713;</button>
+                                        <button class="btn btn-sm btn-danger" @click="deleteTask(task.id)" title="删除">&#x2715;</button>
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
+                        <div v-if="doneTasks.length > 0" class="card">
+                            <h3>已完成 <span class="badge badge-done">{{ doneTasks.length }}</span></h3>
+                            <ul class="task-list done-list">
+                                <li v-for="task in doneTasks.slice(0, 10)" :key="task.id" class="task-item done-item">
+                                    <span class="task-title done-title">{{ task.title }}</span>
+                                    <button class="btn btn-sm" @click="markUndo(task.id)" title="恢复">&#x21A9;</button>
+                                </li>
+                            </ul>
+                        </div>
+                    </section>
+                </main>
+            </div>
+
+            <!-- ──────── 切片标签页 ──────── -->
+            <div v-if="currentTab === 'slices'" class="tab-page">
+                <header class="topbar">
+                    <h1>时间切片</h1>
+                    <div class="topbar-actions">
+                        <span class="quick-label-hint">快速标注：</span>
+                        <button class="btn btn-sm btn-coarse" @click="openCoarse('morning')">&#x2600; 上午</button>
+                        <button class="btn btn-sm btn-coarse" @click="openCoarse('afternoon')">&#x26C5; 下午</button>
+                        <button class="btn btn-sm btn-coarse" @click="openCoarse('evening')">&#x1F319; 晚上</button>
+                        <button class="btn btn-sm" @click="popupMode" title="弹出为独立窗口">弹出</button>
+                    </div>
+                </header>
+                <main class="main-grid main-grid-slices">
+                    <!-- 左栏：新增切片 + 日历热力图 -->
+                    <aside class="panel panel-left">
+                        <section class="card">
+                            <h2>新增切片</h2>
+                            <div v-if="sliceError" class="inline-error">{{ sliceError }}</div>
+                            <div class="form-group">
+                                <label>记录时间</label>
+                                <input v-model="sliceForm.timestamp" type="datetime-local" required>
+                            </div>
+                            <div class="form-group">
+                                <label>活动描述</label>
+                                <input v-model="sliceForm.activity_desc" type="text" placeholder="做了什么？" @keyup.enter="submitSlice">
+                            </div>
+                            <div class="form-group">
+                                <label>情绪标签</label>
+                                <div class="tag-picker">
+                                    <span v-for="tag in moodTags" :key="tag.id"
+                                          class="tag-chip" :class="{ 'tag-active': sliceForm.mood_tags.includes(tag.name) }"
+                                          :style="sliceForm.mood_tags.includes(tag.name) ? {background: tag.color, color:'#fff'} : {}"
+                                          @click="toggleTag(tag.name)">
+                                        {{ tag.name }}
+                                    </span>
+                                    <span v-if="moodTags.length === 0" class="hint">加载中…</span>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>情绪强度 {{ sliceForm.mood_intensity }}</label>
+                                    <input v-model.number="sliceForm.mood_intensity" type="range" min="1" max="5"
+                                           :style="'--val:' + sliceForm.mood_intensity">
+                                </div>
+                                <div class="form-group">
+                                    <label>精力水平 {{ sliceForm.energy_level }}</label>
+                                    <input v-model.number="sliceForm.energy_level" type="range" min="1" max="5"
+                                           :style="'--val:' + sliceForm.energy_level">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>关联任务</label>
+                                <select v-model="sliceForm.related_task_id">
+                                    <option :value="null">— 无 —</option>
+                                    <option v-for="t in assistantTasks" :key="t.id" :value="t.id">
+                                        {{ '&#x2605;'.repeat(6 - t.priority) }} {{ t.title }}
+                                    </option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>自由笔记</label>
+                                <textarea v-model="sliceForm.notes" rows="2" placeholder="补充记录…"></textarea>
+                            </div>
+                            <button class="btn btn-primary btn-block" @click="submitSlice">提交切片</button>
+                        </section>
+                        <section class="card">
+                            <h2>热力图</h2>
+                            <div class="heatmap-header">
+                                <button class="btn btn-sm" @click="heatmapMonth -= 1">&#x25C0;</button>
+                                <span class="heatmap-title">{{ heatmapTitle }}</span>
+                                <button class="btn btn-sm" @click="heatmapMonth += 1">&#x25B6;</button>
+                            </div>
+                            <div class="heatmap-grid">
+                                <span v-for="d in weekDays" class="heatmap-label">{{ d }}</span>
+                                <span v-for="i in heatmapOffset" :key="'pad'+i" class="heatmap-cell heatmap-pad"></span>
+                                <span v-for="cell in heatmapCells" :key="cell.date"
+                                      class="heatmap-cell" :class="[heatLevel(cell.slice_count), deviceDot(cell.has_device_data)]"
+                                      :title="cell.date + ' · 切片 ' + cell.slice_count + ' · ' + (cell.has_device_data ? '有' : '无') + '设备数据'"
+                                      @click="goDate(cell.date)">
+                                    {{ cell.day }}
+                                </span>
+                            </div>
+                            <div class="heatmap-legend">
+                                <span class="legend-label">少</span>
+                                <span class="legend-box lvl-0"></span>
+                                <span class="legend-box lvl-1"></span>
+                                <span class="legend-box lvl-2"></span>
+                                <span class="legend-box lvl-3"></span>
+                                <span class="legend-label">多</span>
+                            </div>
+                        </section>
+                    </aside>
+
+                    <!-- 右栏：切片列表 + 设备日志 -->
+                    <section class="panel panel-right">
+                        <div class="card card-toolbar">
+                            <button class="btn btn-sm" @click="shiftDate(-1)">&#x25C0;</button>
+                            <input v-model="viewDate" type="date" @change="loadAll" class="date-input">
+                            <button class="btn btn-sm" @click="shiftDate(1)">&#x25B6;</button>
+                            <button class="btn btn-sm" @click="goToday">今天</button>
+                            <span class="toolbar-info">{{ slices.length }} 条 · {{ deviceLogs.length }} 条记录</span>
+                        </div>
+                        <div class="card">
+                            <h2>手动切片</h2>
+                            <div v-if="slices.length === 0" class="empty-state">今天还没有手动切片</div>
+                            <ul v-else class="slice-list">
+                                <li v-for="slc in slices" :key="slc.id" class="slice-item"
+                                    :class="{ 'slice-coarse': slc.granularity === 'coarse' }"
+                                    :style="{ animationDelay: (slices.indexOf(slc) * 40) + 'ms' }">
+                                    <div class="slice-time">{{ formatTime(slc.timestamp) }}</div>
+                                    <div class="slice-body">
+                                        <div class="slice-desc">{{ slc.activity_desc }}</div>
+                                        <div class="slice-tags">
+                                            <span v-for="tag in slc.mood_tags" :key="tag" class="tag-chip tag-active"
+                                                  :style="{background: tagColor(tag), color:'#fff'}">
+                                                {{ tag }}
+                                            </span>
+                                        </div>
+                                        <div class="slice-levels">
+                                            <span>情绪 {{ '&#x2605;'.repeat(slc.mood_intensity) }}{{ '&#x2606;'.repeat(5 - slc.mood_intensity) }}</span>
+                                            <span>精力 {{ '&#x2605;'.repeat(slc.energy_level) }}{{ '&#x2606;'.repeat(5 - slc.energy_level) }}</span>
+                                        </div>
+                                        <div v-if="slc.related_task_id" class="slice-task">
+                                            关联：{{ getTaskTitle(slc.related_task_id) }}
+                                        </div>
+                                        <div v-if="slc.notes" class="slice-notes">{{ slc.notes }}</div>
+                                    </div>
+                                    <div class="slice-actions">
+                                        <button class="btn btn-sm" @click="openEditSlice(slc)" title="编辑">&#x270E;</button>
+                                        <button class="btn btn-sm btn-danger" @click="deleteSlice(slc.id)" title="删除">&#x2715;</button>
+                                    </div>
+                                </li>
+                            </ul>
+                        </div>
+                        <div class="card">
+                            <h2 @click="showDeviceLogs = !showDeviceLogs" style="cursor:pointer;user-select:none">
+                                {{ showDeviceLogs ? '&#x25BC; 收起' : '&#x25B6; 展开' }} 设备记录
+                                <span class="badge">{{ deviceLogs.length }}</span>
+                            </h2>
+                            <div v-if="deviceSummary.length > 0" class="device-summary">
+                                <span v-for="s in deviceSummary.slice(0, 8)" :key="s.process_name" class="device-chip">
+                                    {{ s.process_name }} {{ s.active_minutes }}min
+                                </span>
+                            </div>
+                            <div v-if="showDeviceLogs && deviceLogs.length > 0" class="device-log-list">
+                                <div v-for="log in deviceLogs" :key="log.id" class="device-log-item">
+                                    <span class="log-time">{{ log.timestamp.slice(11, 16) }}</span>
+                                    <span class="log-proc">{{ log.process_name }}</span>
+                                    <span class="log-title">{{ log.window_title }}</span>
+                                    <span class="log-dur">{{ log.duration_seconds }}s</span>
+                                </div>
+                            </div>
+                            <div v-if="deviceLogs.length === 0" class="empty-state">今天还没有设备记录</div>
+                        </div>
+                    </section>
+                </main>
+            </div>
+
+            <!-- ──────── 设置标签页 ──────── -->
+            <div v-if="currentTab === 'settings'" class="tab-page">
+                <header class="topbar">
+                    <h1>设置</h1>
+                </header>
+                <div class="settings-content">
+                    <div class="card">
+                        <h2>数据导出</h2>
+                        <p class="hint">导出切片或任务数据为 JSON / CSV 格式</p>
+                        <div class="form-row" style="margin-top:12px">
+                            <select id="exportType" class="input-sm" style="flex:1">
+                                <option value="slices">切片数据</option>
+                                <option value="tasks">任务数据</option>
+                            </select>
+                            <select id="exportFormat" class="input-sm" style="flex:1">
+                                <option value="json">JSON</option>
+                                <option value="csv">CSV</option>
+                            </select>
+                            <button class="btn btn-primary btn-sm" onclick="exportData()">导出</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <h2>日志清理</h2>
+                        <p class="hint">应用日志自动保留 7 天，设备日志保留 30 天</p>
+                        <button class="btn btn-sm btn-danger" style="margin-top:12px"
+                                onclick="fetch('/api/system/cleanup-device-logs', {method:'POST'}).then(r=>r.json()).then(d=>alert('清理了 '+d.deleted+' 条旧设备日志'))">
+                            手动清理设备日志
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /content-area -->
+    </div><!-- /app-shell -->
+
+    <!-- ══════════ 编辑任务 ══════════ -->
+    <div v-if="showEditModal" class="modal-overlay" @click.self="closeEdit">
+        <div class="modal">
+            <h3>编辑任务</h3>
+            <div class="form-group">
+                <label>任务名称</label>
+                <input v-model="editForm.title" type="text" @keyup.enter="saveEdit">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>优先级</label>
+                    <select v-model.number="editForm.priority">
+                        <option :value="1">&#x2605; 最高</option>
+                        <option :value="2">&#x2605; 较高</option>
+                        <option :value="3">&#x2605; 普通</option>
+                        <option :value="4">&#x2605; 较低</option>
+                        <option :value="5">&#x2605; 最低</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>预估时长（分钟）</label>
+                    <input v-model.number="editForm.estimated_minutes" type="number" min="1" max="480">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>截止时间（可选）</label>
+                <input v-model="editForm.deadline" type="datetime-local">
+            </div>
+            <div v-if="editTaskWasScheduled" class="hint" style="color:#d4a017;margin-bottom:12px;font-weight:500">
+                该任务已排程，修改后请重新点击「重新排程」
+            </div>
+            <div class="modal-actions">
+                <button class="btn" @click="closeEdit">取消</button>
+                <button class="btn btn-primary" @click="saveEdit">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ 手动分配 ══════════ -->
+    <div v-if="showAssignModal" class="modal-overlay" @click.self="closeAssign">
+        <div class="modal">
+            <h3>分配任务：{{ assignTask?.title }}</h3>
+            <p class="hint">预估时长：{{ assignTask?.estimated_minutes }} 分钟</p>
+            <div v-if="assignGaps.length === 0" class="empty-state">今天没有空闲时段可供分配</div>
+            <ul v-else class="gap-list">
+                <li v-for="(gap, idx) in assignGaps" :key="idx" class="gap-item"
+                    :class="{ 'gap-selected': selectedGapIndex === idx }"
+                    @click="selectedGapIndex = idx">
+                    <span class="gap-slot">{{ gap.slot_label }}</span>
+                    <span class="gap-time">{{ gap.gap_start }} – {{ gap.gap_end }}</span>
+                    <span class="gap-dur">（{{ gap.gap_minutes }} 分钟空闲）</span>
+                </li>
+            </ul>
+            <div class="modal-actions">
+                <button class="btn" @click="closeAssign">取消</button>
+                <button class="btn btn-primary" @click="confirmAssign"
+                        :disabled="selectedGapIndex === null || assignGaps.length === 0">
+                    确认分配
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ 粗粒度快速标注 ══════════ -->
+    <div v-if="showCoarseModal" class="modal-overlay" @click.self="closeCoarse">
+        <div class="modal">
+            <h3>快速标注 — {{ coarseForm.period === 'morning' ? '☀ 上午' : coarseForm.period === 'afternoon' ? '⛅ 下午' : '🌙 晚上' }}</h3>
+            <div v-if="sliceError" class="inline-error">{{ sliceError }}</div>
+            <div class="form-group">
+                <label>活动描述</label>
+                <input v-model="coarseForm.activity_desc" type="text" placeholder="做了什么？" @keyup.enter="submitCoarse">
+            </div>
+            <div class="form-group">
+                <label>情绪标签</label>
+                <div class="tag-picker">
+                    <span v-for="tag in moodTags" :key="tag.id"
+                          class="tag-chip" :class="{ 'tag-active': coarseForm.mood_tags.includes(tag.name) }"
+                          :style="coarseForm.mood_tags.includes(tag.name) ? {background: tag.color, color:'#fff'} : {}"
+                          @click="() => { const i = coarseForm.mood_tags.indexOf(tag.name); i >= 0 ? coarseForm.mood_tags.splice(i,1) : coarseForm.mood_tags.push(tag.name); }">
+                        {{ tag.name }}
+                    </span>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>情绪强度 {{ coarseForm.mood_intensity }}</label>
+                    <input v-model.number="coarseForm.mood_intensity" type="range" min="1" max="5"
+                           :style="'--val:' + coarseForm.mood_intensity">
+                </div>
+                <div class="form-group">
+                    <label>精力水平 {{ coarseForm.energy_level }}</label>
+                    <input v-model.number="coarseForm.energy_level" type="range" min="1" max="5"
+                           :style="'--val:' + coarseForm.energy_level">
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" @click="closeCoarse">取消</button>
+                <button class="btn btn-primary" @click="submitCoarse">提交</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ 编辑切片 ══════════ -->
+    <div v-if="showEditSliceModal" class="modal-overlay" @click.self="closeEditSlice">
+        <div class="modal">
+            <h3>编辑切片</h3>
+            <div v-if="sliceError" class="inline-error">{{ sliceError }}</div>
+            <div class="form-group">
+                <label>记录时间</label>
+                <input v-model="editSliceForm.timestamp" type="datetime-local" required>
+            </div>
+            <div class="form-group">
+                <label>活动描述</label>
+                <input v-model="editSliceForm.activity_desc" type="text" @keyup.enter="saveEditSlice">
+            </div>
+            <div class="form-group">
+                <label>情绪标签</label>
+                <div class="tag-picker">
+                    <span v-for="tag in moodTags" :key="tag.id"
+                          class="tag-chip" :class="{ 'tag-active': (editSliceForm.mood_tags || []).includes(tag.name) }"
+                          :style="(editSliceForm.mood_tags || []).includes(tag.name) ? {background: tag.color, color:'#fff'} : {}"
+                          @click="() => { const arr = editSliceForm.mood_tags || []; const i = arr.indexOf(tag.name); i >= 0 ? arr.splice(i,1) : arr.push(tag.name); editSliceForm.mood_tags = arr; }">
+                        {{ tag.name }}
+                    </span>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>情绪强度 {{ editSliceForm.mood_intensity }}</label>
+                    <input v-model.number="editSliceForm.mood_intensity" type="range" min="1" max="5"
+                           :style="'--val:' + editSliceForm.mood_intensity">
+                </div>
+                <div class="form-group">
+                    <label>精力水平 {{ editSliceForm.energy_level }}</label>
+                    <input v-model.number="editSliceForm.energy_level" type="range" min="1" max="5"
+                           :style="'--val:' + editSliceForm.energy_level">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>关联任务</label>
+                <select v-model="editSliceForm.related_task_id">
+                    <option :value="null">— 无 —</option>
+                    <option v-for="t in assistantTasks" :key="t.id" :value="t.id">
+                        {{ '&#x2605;'.repeat(6 - t.priority) }} {{ t.title }}
+                    </option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>自由笔记</label>
+                <textarea v-model="editSliceForm.notes" rows="2" placeholder="补充记录…"></textarea>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" @click="closeEditSlice">取消</button>
+                <button class="btn btn-primary" @click="saveEditSlice">保存</button>
+            </div>
+        </div>
+    </div>
+
+{% endraw %}
+</div>
+
+<script>
+function exportData() {
+    const type = document.getElementById('exportType').value;
+    const format = document.getElementById('exportFormat').value;
+    window.open(`/api/system/export?format=${format}&type=${type}`, '_blank');
+}
+</script>
+
+<script src="/static/js/tasks.js"></script>
+<script src="/static/js/slices.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>
