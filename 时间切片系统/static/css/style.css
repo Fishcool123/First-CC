@@ -1,0 +1,208 @@
+/* style.css — 时间切片系统 全局样式 */
+/* 设计思路：两栏布局，左侧表单+热力图，右侧切片列表 */
+
+:root {
+    --bg:        #f5f5f8;
+    --card-bg:   #ffffff;
+    --primary:   #5e6ad2;
+    --primary-h: #4b57b8;
+    --success:   #34c759;
+    --danger:    #ff3b30;
+    --warning:   #fff3cd;
+    --text:      #1d1d1f;
+    --text-sec:  #6e6e73;
+    --border:    #e5e5ea;
+    --radius:    12px;
+    --shadow:    0 1px 3px rgba(0,0,0,.06);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+    min-height: 100vh;
+}
+
+/* ── 顶栏 ─────────────────────────────────────────── */
+.topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 24px; background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+}
+.topbar h1 { font-size: 20px; font-weight: 700; }
+
+/* ── 双栏主网格 ───────────────────────────────────── */
+.main-grid {
+    display: grid;
+    grid-template-columns: 380px 1fr;
+    gap: 20px; padding: 20px 24px; max-width: 1400px; margin: 0 auto;
+}
+
+.panel { display: flex; flex-direction: column; gap: 16px; }
+
+/* ── 卡片 ─────────────────────────────────────────── */
+.card {
+    background: var(--card-bg); border-radius: var(--radius);
+    padding: 20px; box-shadow: var(--shadow);
+}
+.card h2 { font-size: 16px; margin-bottom: 14px; }
+.card-toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.date-input {
+    padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 14px;
+}
+.toolbar-info { font-size: 13px; color: var(--text-sec); margin-left: auto; }
+
+/* ── 表单 ─────────────────────────────────────────── */
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 13px; color: var(--text-sec); margin-bottom: 4px; }
+.form-group input[type="text"],
+.form-group input[type="datetime-local"],
+.form-group select,
+.form-group textarea {
+    width: 100%; padding: 8px 12px; border: 1px solid var(--border);
+    border-radius: 8px; font-size: 14px; outline: none;
+    font-family: inherit;
+}
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    border-color: var(--primary);
+}
+.form-group input[type="range"] { width: 100%; }
+.form-row { display: flex; gap: 12px; }
+.form-row .form-group { flex: 1; }
+
+/* ── 标签选择器 ───────────────────────────────────── */
+.tag-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-chip {
+    display: inline-block; padding: 4px 12px; border-radius: 14px;
+    font-size: 13px; background: #f0f0f5; cursor: pointer;
+    user-select: none; transition: all .15s;
+}
+.tag-chip:hover { opacity: .8; }
+.tag-active { font-weight: 600; }
+
+/* ── 按钮 ─────────────────────────────────────────── */
+.btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card-bg); color: var(--text);
+    font-size: 14px; cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.btn:hover { background: #f0f0f5; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-primary:hover { background: var(--primary-h); }
+.btn-sm { padding: 4px 10px; font-size: 13px; }
+.btn-block { width: 100%; margin-top: 8px; }
+.btn-danger { color: var(--danger); border-color: transparent; }
+.btn-danger:hover { background: #fff0f0; }
+
+/* ── 切片列表 ─────────────────────────────────────── */
+.slice-list { list-style: none; }
+.slice-item {
+    display: flex; gap: 12px; padding: 14px 0;
+    border-bottom: 1px solid var(--border);
+}
+.slice-item:last-child { border-bottom: none; }
+.slice-time {
+    font-weight: 700; color: var(--primary); font-size: 14px;
+    min-width: 40px; padding-top: 2px;
+}
+.slice-body { flex: 1; min-width: 0; }
+.slice-desc { font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+.slice-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.slice-tags .tag-chip { padding: 2px 8px; font-size: 12px; cursor: default; }
+.slice-levels { font-size: 12px; color: var(--text-sec); display: flex; gap: 12px; }
+.slice-task { font-size: 12px; color: var(--primary); margin-top: 2px; }
+.slice-notes {
+    font-size: 13px; color: var(--text-sec); margin-top: 4px;
+    font-style: italic;
+}
+
+/* ── 设备日志 ─────────────────────────────────────── */
+.device-summary {
+    display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
+}
+.device-chip {
+    font-size: 12px; background: #f0f0f5; padding: 2px 8px; border-radius: 6px;
+}
+.device-log-list { max-height: 300px; overflow-y: auto; font-size: 13px; }
+.device-log-item {
+    display: flex; gap: 8px; padding: 4px 0;
+    border-bottom: 1px solid #f5f5f8;
+}
+.log-time { color: var(--text-sec); min-width: 40px; font-variant-numeric: tabular-nums; }
+.log-proc { font-weight: 600; color: var(--primary); min-width: 110px; }
+.log-title {
+    flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    color: var(--text-sec);
+}
+.log-dur { color: var(--text-sec); font-size: 11px; }
+
+/* ── 日历热力图 ───────────────────────────────────── */
+.heatmap-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+}
+.heatmap-title { font-size: 14px; font-weight: 600; }
+.heatmap-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 3px;
+    font-size: 12px; text-align: center;
+}
+.heatmap-label {
+    color: var(--text-sec); font-weight: 600; padding: 2px 0;
+}
+.heatmap-cell {
+    aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
+    border-radius: 4px; cursor: pointer; transition: transform .1s;
+    font-variant-numeric: tabular-nums;
+    position: relative;     /* 设备圆点绝对定位容器 */
+}
+.heatmap-cell:hover { transform: scale(1.2); z-index: 1; }
+.heatmap-pad { cursor: default; }
+
+/* 热力图色阶（Bug #3 修复：0/1/2-3/4-5/6+） */
+.lvl-0 { background: #f0f0f5; color: #c7c7cc; }
+.lvl-1 { background: #d4edda; color: #155724; }
+.lvl-2 { background: #a3d9a5; color: #155724; font-weight: 600; }
+.lvl-3 { background: #5cb85c; color: #fff; font-weight: 600; }
+.lvl-4 { background: #2a7a2a; color: #fff; font-weight: 700; }
+
+/* 设备数据圆点（格子底部） */
+.dot-yes::after {
+    content: ""; position: absolute; bottom: 2px; left: 50%;
+    transform: translateX(-50%);
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #007aff;
+}
+
+.heatmap-legend {
+    display: flex; align-items: center; gap: 4px; margin-top: 10px;
+    justify-content: center;
+}
+.legend-label { font-size: 11px; color: var(--text-sec); }
+.legend-box { width: 14px; height: 14px; border-radius: 3px; }
+
+/* ── 空状态 ───────────────────────────────────────── */
+.empty-state {
+    text-align: center; padding: 24px 16px;
+    color: var(--text-sec); font-size: 14px;
+}
+
+.badge {
+    display: inline-block; font-size: 12px; font-weight: 600;
+    background: var(--primary); color: #fff;
+    padding: 1px 8px; border-radius: 10px; vertical-align: middle;
+}
+
+/* ── 响应式 ───────────────────────────────────────── */
+@media (max-width: 900px) {
+    .main-grid { grid-template-columns: 1fr; }
+}

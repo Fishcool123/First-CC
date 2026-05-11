@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<!-- index.html — 时间切片系统 单页面界面 -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>时间切片系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/vue.global.prod.js"></script>
+</head>
+<body>
+<div id="app">
+{% raw %}
+    <!-- ══════════ 顶栏 ══════════ -->
+    <header class="topbar">
+        <h1>⏱ 时间切片系统</h1>
+        <div class="topbar-actions">
+            <button class="btn btn-sm" @click="popupMode" title="弹出为独立窗口"> 弹出窗口</button>
+        </div>
+    </header>
+
+    <!-- ══════════ 双栏主体 ══════════ -->
+    <main class="main-grid">
+
+        <!-- 左栏：新增切片 + 日历热力图 -->
+        <aside class="panel panel-left">
+
+            <!-- 新增切片表单 -->
+            <section class="card">
+                <h2> 新增切片</h2>
+                <div class="form-group">
+                    <label>记录时间</label>
+                    <input v-model="form.timestamp" type="datetime-local" required>
+                </div>
+                <div class="form-group">
+                    <label>活动描述 *</label>
+                    <input v-model="form.activity_desc" type="text" placeholder="做了什么？" @keyup.enter="submitSlice">
+                </div>
+                <div class="form-group">
+                    <label>情绪标签（可多选）</label>
+                    <div class="tag-picker">
+                        <span v-for="tag in moodTags" :key="tag.id"
+                              class="tag-chip" :class="{ 'tag-active': form.mood_tags.includes(tag.name) }"
+                              :style="form.mood_tags.includes(tag.name) ? {background: tag.color, color:'#fff'} : {}"
+                              @click="toggleTag(tag.name)">
+                            {{ tag.name }}
+                        </span>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>情绪强度 {{ form.mood_intensity }}</label>
+                        <input v-model.number="form.mood_intensity" type="range" min="1" max="5">
+                    </div>
+                    <div class="form-group">
+                        <label>精力水平 {{ form.energy_level }}</label>
+                        <input v-model.number="form.energy_level" type="range" min="1" max="5">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>关联任务</label>
+                    <select v-model="form.related_task_id">
+                        <option :value="null">— 无 —</option>
+                        <option v-for="t in assistantTasks" :key="t.id" :value="t.id">
+                            {{ '★'.repeat(6 - t.priority) }} {{ t.title }}
+                        </option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>自由笔记</label>
+                    <textarea v-model="form.notes" rows="2" placeholder="补充记录..."></textarea>
+                </div>
+                <button class="btn btn-primary btn-block" @click="submitSlice"> 提交切片</button>
+            </section>
+
+            <!-- 日历热力图 -->
+            <section class="card">
+                <h2> 热力图概览</h2>
+                <div class="heatmap-header">
+                    <button class="btn btn-sm" @click="heatmapMonth -= 1">◀</button>
+                    <span class="heatmap-title">{{ heatmapTitle }}</span>
+                    <button class="btn btn-sm" @click="heatmapMonth += 1">▶</button>
+                </div>
+                <div class="heatmap-grid">
+                    <!-- 星期头 -->
+                    <span v-for="d in weekDays" class="heatmap-label">{{ d }}</span>
+                    <!-- 填充空白格（月初偏移） -->
+                    <span v-for="i in heatmapOffset" :key="'pad'+i" class="heatmap-cell heatmap-pad"></span>
+                    <!-- 数据格 -->
+                    <span v-for="cell in heatmapCells" :key="cell.date"
+                          class="heatmap-cell" :class="[heatLevel(cell.slice_count), deviceDot(cell.has_device_data)]"
+                          :title="cell.date + ' · 切片 ' + cell.slice_count + ' · ' + (cell.has_device_data ? '有' : '无') + '设备数据'"
+                          @click="goDate(cell.date)">
+                        {{ cell.day }}
+                    </span>
+                </div>
+                <div class="heatmap-legend">
+                    <span class="legend-label">少</span>
+                    <span class="legend-box lvl-0"></span>
+                    <span class="legend-box lvl-1"></span>
+                    <span class="legend-box lvl-2"></span>
+                    <span class="legend-box lvl-3"></span>
+                    <span class="legend-label">多</span>
+                </div>
+            </section>
+        </aside>
+
+        <!-- 右栏：切片列表 + 设备记录 -->
+        <section class="panel panel-right">
+
+            <!-- 日期选择器 -->
+            <div class="card card-toolbar">
+                <button class="btn btn-sm" @click="shiftDate(-1)">◀ 前一天</button>
+                <input v-model="viewDate" type="date" @change="loadAll" class="date-input">
+                <button class="btn btn-sm" @click="shiftDate(1)">后一天 ▶</button>
+                <button class="btn btn-sm" @click="goToday"> 今天</button>
+                <span class="toolbar-info">{{ slices.length }} 条切片 · {{ deviceLogs.length }} 条设备记录</span>
+            </div>
+
+            <!-- 手动切片列表 -->
+            <div class="card">
+                <h2> 手动切片</h2>
+                <div v-if="slices.length === 0" class="empty-state">今天还没有手动切片</div>
+                <ul v-else class="slice-list">
+                    <li v-for="slc in slices" :key="slc.id" class="slice-item">
+                        <div class="slice-time">{{ formatTime(slc.timestamp) }}</div>
+                        <div class="slice-body">
+                            <div class="slice-desc">{{ slc.activity_desc }}</div>
+                            <div class="slice-tags">
+                                <span v-for="tag in slc.mood_tags" :key="tag" class="tag-chip tag-active"
+                                      :style="{background: tagColor(tag), color:'#fff'}">
+                                    {{ tag }}
+                                </span>
+                            </div>
+                            <div class="slice-levels">
+                                <span>情绪：{{ '★'.repeat(slc.mood_intensity) }}{{ '☆'.repeat(5 - slc.mood_intensity) }}</span>
+                                <span>精力：{{ '★'.repeat(slc.energy_level) }}{{ '☆'.repeat(5 - slc.energy_level) }}</span>
+                            </div>
+                            <div v-if="slc.related_task_id" class="slice-task">
+                                关联：{{ getTaskTitle(slc.related_task_id) }}
+                            </div>
+                            <div v-if="slc.notes" class="slice-notes">{{ slc.notes }}</div>
+                        </div>
+                        <button class="btn btn-sm btn-danger" @click="deleteSlice(slc.id)">✕</button>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 设备使用日志（可折叠） -->
+            <div class="card">
+                <h2 @click="showDeviceLogs = !showDeviceLogs" style="cursor:pointer">
+                    {{ showDeviceLogs ? '▼' : '▶' }} 设备使用记录
+                    <span class="badge">{{ deviceLogs.length }}条</span>
+                </h2>
+                <!-- 聚合概览 -->
+                <div v-if="deviceSummary.length > 0" class="device-summary">
+                    <span v-for="s in deviceSummary.slice(0, 8)" :key="s.process_name" class="device-chip">
+                        {{ s.process_name }} {{ s.active_minutes }}min
+                    </span>
+                </div>
+                <!-- 明细列表（折叠） -->
+                <div v-if="showDeviceLogs && deviceLogs.length > 0" class="device-log-list">
+                    <div v-for="log in deviceLogs" :key="log.id" class="device-log-item">
+                        <span class="log-time">{{ log.timestamp.slice(11, 16) }}</span>
+                        <span class="log-proc">{{ log.process_name }}</span>
+                        <span class="log-title">{{ log.window_title }}</span>
+                        <span class="log-dur">{{ log.duration_seconds }}s</span>
+                    </div>
+                </div>
+                <div v-if="deviceLogs.length === 0" class="empty-state">今天还没有设备记录</div>
+            </div>
+        </section>
+    </main>
+{% endraw %}
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

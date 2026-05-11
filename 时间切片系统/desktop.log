@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "C:\Users\www15\Desktop\First CC\时间切片系统\desktop.py", line 16, in <module>
+    sys.stdout = open(LOG_PATH, "a", encoding="utf-8", buffering=1)
+                 ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'C:\\Users\\www15\\Desktop\\First CC\\时间切片系统\\desktop.log'
