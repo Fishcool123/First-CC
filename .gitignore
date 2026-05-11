@@ -13,6 +13,9 @@ output/
 # Python cache
 __pycache__/
 
+# SQLite databases
+*.db
+
 # System files
 Thumbs.db
 Desktop.ini

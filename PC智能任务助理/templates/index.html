@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<!-- index.html — PC智能任务助理 单页面界面 -->
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PC智能任务助理</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- Vue 3 CDN -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    <!-- SortableJS CDN（拖拽排序） -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1/Sortable.min.js"></script>
+</head>
+<body>
+<div id="app">
+{% raw %}
+    <!-- ══════════ 顶栏 ══════════ -->
+    <header class="topbar">
+        <h1> PC智能任务助理</h1>
+        <div class="topbar-actions">
+            <button class="btn btn-sm" @click="popupMode" title="弹出为独立窗口"> 弹出窗口</button>
+            <button class="btn btn-sm" @click="requestNotification" :disabled="notifyGranted">
+                {{ notifyGranted ? ' 通知已开启' : ' 开启通知' }}
+            </button>
+        </div>
+    </header>
+
+    <!-- ══════════ 三栏主体 ══════════ -->
+    <main class="main-grid">
+
+        <!-- 左栏：新增任务 + 可用时段 -->
+        <aside class="panel panel-left">
+            <!-- 新增任务表单 -->
+            <section class="card">
+                <h2> 新增任务</h2>
+                <div class="form-group">
+                    <label>任务名称</label>
+                    <input v-model="form.title" type="text" placeholder="输入任务名称..." @keyup.enter="submitTask">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>优先级</label>
+                        <select v-model.number="form.priority">
+                            <option :value="1"> 最高</option>
+                            <option :value="2"> 较高</option>
+                            <option :value="3" selected> 普通</option>
+                            <option :value="4"> 较低</option>
+                            <option :value="5"> 最低</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>预估时长（分钟）</label>
+                        <input v-model.number="form.estimated_minutes" type="number" min="1" max="480" placeholder="30">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>截止时间（可选）</label>
+                    <input v-model="form.deadline" type="datetime-local">
+                </div>
+                <button class="btn btn-primary btn-block" @click="submitTask">添加任务</button>
+            </section>
+
+            <!-- 可用时段设置 -->
+            <section class="card">
+                <h2>⚙ 可用时段</h2>
+                <div v-for="(avail, idx) in availabilities" :key="avail.id" class="avail-row">
+                    <input v-model="avail.label" type="text" class="input-sm" style="width:60px" @change="saveAvail(avail)">
+                    <input v-model="avail.start_time" type="time" class="input-sm" @change="saveAvail(avail)">
+                    <span>—</span>
+                    <input v-model="avail.end_time" type="time" class="input-sm" @change="saveAvail(avail)">
+                    <button class="btn btn-sm btn-danger" @click="deleteAvail(avail.id)">✕</button>
+                </div>
+                <button class="btn btn-sm" @click="addAvail">+ 添加时段</button>
+            </section>
+        </aside>
+
+        <!-- 中栏：今日排程 -->
+        <section class="panel panel-center">
+            <div class="card">
+                <h2> 今日排程 <span class="badge">{{ scheduled.length }}个</span></h2>
+                <div v-if="scheduled.length === 0" class="empty-state">
+                    暂无排程 — 请添加任务并设置可用时段，然后点击「重新排程」
+                </div>
+                <ul v-else class="schedule-list">
+                    <li v-for="(item, idx) in scheduled" :key="idx" class="schedule-item">
+                    <span class="sched-time">{{ item.start }} – {{ item.end }}</span>
+                    <span class="sched-slot-tag">{{ item.slot_label }}</span>
+                    <span v-if="item.is_manual" class="sched-manual-tag" title="手动分配">手</span>
+                    <span class="sched-title">{{ item.task.title }}</span>
+                    <span class="sched-prio"> {{ '★'.repeat(6 - item.task.priority) }}</span>
+                    <span class="sched-dur">{{ item.task.estimated_minutes }}min</span>
+                    <button v-if="item.is_manual" class="btn btn-sm btn-danger"
+                            @click="removeScheduleItem(item.id)" title="退回未排程">✕</button>
+                    </li>
+                </ul>
+                <button class="btn btn-primary btn-block" @click="refreshSchedule" :disabled="loading">
+                    {{ loading ? '排程中...' : ' 重新排程' }}
+                </button>
+            </div>
+
+            <!-- 未排程列表（可手动分配） -->
+            <div v-if="unscheduled.length > 0" class="card card-warning">
+                <h3>⚠ 未能排程 ({{ unscheduled.length }}) — 可手动分配</h3>
+                <ul class="task-list">
+                    <li v-for="task in unscheduled" :key="task.id" class="task-item">
+                        <div class="task-body">
+                            <div class="task-title">{{ task.title }}</div>
+                            <div class="task-meta">
+                                <span class="prio" :class="'prio-' + task.priority"> {{ '★'.repeat(6 - task.priority) }}</span>
+                                <span>{{ task.estimated_minutes }}min</span>
+                                <span v-if="task.deadline" class="deadline" :class="{ 'deadline-soon': isSoon(task.deadline) }">
+                                     {{ formatDeadline(task.deadline) }}
+                                </span>
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-primary" @click="openAssign(task)"> 分配</button>
+                    </li>
+                </ul>
+            </div>
+        </section>
+
+        <!-- 右栏：待办列表（可拖拽） -->
+        <section class="panel panel-right">
+            <div class="card">
+                <h2> 待办列表 <span class="badge">{{ pendingTasks.length }}个</span></h2>
+                <div v-if="pendingTasks.length === 0" class="empty-state">
+                    暂无待办任务
+                </div>
+                <ul ref="sortableList" v-else class="task-list">
+                    <li v-for="task in pendingTasks" :key="task.id" class="task-item"
+                        :class="{ 'task-dragging': dragId === task.id }">
+                        <span class="drag-handle" title="拖拽排序">⠿</span>
+                        <div class="task-body">
+                            <div class="task-title">{{ task.title }}</div>
+                            <div class="task-meta">
+                                <span class="prio" :class="'prio-' + task.priority"> {{ '★'.repeat(6 - task.priority) }}</span>
+                                <span>{{ task.estimated_minutes }}min</span>
+                                <span v-if="task.deadline" class="deadline" :class="{ 'deadline-soon': isSoon(task.deadline) }">
+                                     {{ formatDeadline(task.deadline) }}
+                                </span>
+                            </div>
+                        </div>
+                        <div class="task-actions">
+                            <button class="btn btn-sm" @click="openEdit(task)" title="编辑">✎</button>
+                            <button class="btn btn-sm btn-success" @click="markDone(task.id)" title="完成">✓</button>
+                            <button class="btn btn-sm btn-danger" @click="deleteTask(task.id)" title="删除">✕</button>
+                        </div>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- 已完成任务 -->
+            <div v-if="doneTasks.length > 0" class="card">
+                <h3>✅ 已完成 <span class="badge badge-done">{{ doneTasks.length }}</span></h3>
+                <ul class="task-list done-list">
+                    <li v-for="task in doneTasks.slice(0, 10)" :key="task.id" class="task-item done-item">
+                        <span class="task-title done-title">{{ task.title }}</span>
+                        <button class="btn btn-sm" @click="markUndo(task.id)" title="恢复">↩</button>
+                    </li>
+                </ul>
+            </div>
+        </section>
+    </main>
+
+    <!-- ══════════ 编辑任务弹窗 ══════════ -->
+    <div v-if="showEditModal" class="modal-overlay" @click.self="closeEdit">
+        <div class="modal">
+            <h3>✎ 编辑任务</h3>
+            <div class="form-group">
+                <label>任务名称</label>
+                <input v-model="editForm.title" type="text" @keyup.enter="saveEdit">
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>优先级</label>
+                    <select v-model.number="editForm.priority">
+                        <option :value="1"> 最高</option>
+                        <option :value="2"> 较高</option>
+                        <option :value="3"> 普通</option>
+                        <option :value="4"> 较低</option>
+                        <option :value="5"> 最低</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>预估时长（分钟）</label>
+                    <input v-model.number="editForm.estimated_minutes" type="number" min="1" max="480">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>截止时间（可选）</label>
+                <input v-model="editForm.deadline" type="datetime-local">
+            </div>
+            <div v-if="editTaskWasScheduled" class="hint" style="color:#ff9500;margin-bottom:12px">
+                ⚠ 该任务已排程，修改后请重新点击「重新排程」
+            </div>
+            <div class="modal-actions">
+                <button class="btn" @click="closeEdit">取消</button>
+                <button class="btn btn-primary" @click="saveEdit">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ 手动分配弹窗 ══════════ -->
+    <div v-if="showAssignModal" class="modal-overlay" @click.self="closeAssign">
+        <div class="modal">
+            <h3> 分配任务：{{ assignTask?.title }}</h3>
+            <p class="hint">预估时长：{{ assignTask?.estimated_minutes }} 分钟</p>
+            <div v-if="assignGaps.length === 0" class="empty-state">
+                今天没有空闲时段可供分配
+            </div>
+            <ul v-else class="gap-list">
+                <li v-for="(gap, idx) in assignGaps" :key="idx" class="gap-item"
+                    :class="{ 'gap-selected': selectedGapIndex === idx }"
+                    @click="selectedGapIndex = idx">
+                    <span class="gap-slot">{{ gap.slot_label }}</span>
+                    <span class="gap-time">{{ gap.gap_start }} – {{ gap.gap_end }}</span>
+                    <span class="gap-dur">（{{ gap.gap_minutes }}分钟空闲）</span>
+                </li>
+            </ul>
+            <div class="modal-actions">
+                <button class="btn" @click="closeAssign">取消</button>
+                <button class="btn btn-primary" @click="confirmAssign"
+                        :disabled="selectedGapIndex === null || assignGaps.length === 0">
+                    确认分配
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ══════════ 底栏状态 ══════════ -->
+    <footer class="bottombar">
+        <span>共 {{ allTasks.length }} 个任务</span>
+        <span class="sep">|</span>
+        <span>待办 {{ pendingTasks.length }}</span>
+        <span class="sep">|</span>
+        <span>今日排程 {{ scheduled.length }}</span>
+        <span class="sep">|</span>
+        <span>未排入 {{ unscheduled.length }}</span>
+    </footer>
+{% endraw %}
+</div>
+
+<script src="/static/js/app.js"></script>
+</body>
+</html>

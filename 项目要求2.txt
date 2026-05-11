@@ -1,0 +1,61 @@
+【背景】
+你已完成PC智能任务助理第一版MVP，文件在 First CC/PC智能任务助理/ 目录下。
+技术栈：Python Flask + SQLite + Vue 3 CDN + SortableJS。
+当前7个文件：app.py / database.py / scheduler.py / templates/index.html / static/js/app.js / static/css/style.css / start.bat
+
+【第一版复盘 — 四个待解决痛点】
+1. 排程结果不持久化：刷新页面后需重新点击排程，无法回看历史排程
+2. 任务不可编辑：写错了只能删了重建
+3. 未排程任务无手动分配入口：排程满了只告诉你放不下，无法手动干预
+4. 浏览器通知不准时：标签页后台时setInterval被节流
+
+【第二版任务】
+
+■ P0（必须完成，两个一起做，涉及同一批文件）
+
+P0-1: 任务编辑功能
+- 每个任务卡片增加编辑按钮
+- 点击后弹出编辑表单（预填现有数据：标题/优先级/预估时长/截止时间）
+- 后端新增 PUT /api/tasks/<id> 路由
+- database.py 新增 update_task() 方法
+- 编辑后自动刷新列表，已排程的任务编辑后提醒用户重新排程
+
+P0-2: 排程结果持久化
+- 新增 schedule_results 表，结构建议：
+  task_id, date, start_time, end_time, created_at
+- 每次点击「重新排程」时将结果写入此表（先清空当天旧结果再写入新结果）
+- 页面加载时从该表读取当天排程结果，直接渲染，无需重新计算
+- 历史排程可通过日期参数查询（为后续周视图铺路）
+
+■ P1（建议完成，按可实现性评估，尽量全做）
+
+P1-1: 未排程任务手动分配
+- 未排程区域每个任务增加「分配」按钮
+- 点击后展示当天可用时段的空闲间隙列表
+- 用户选一个间隙，任务插入该时段，自动更新排程结果表
+
+P1-2: 弹出窗口记住位置和大小
+- 用 localStorage 存储窗口的 top/left/width/height
+- popupMode() 打开时读取，无记录则用默认值居中
+- 窗口关闭前写入当前值
+
+P1-3: Service Worker 接管通知（解决后台节流）
+- 新增 static/sw.js
+- 把通知检查逻辑从 setInterval 迁移到 Service Worker
+- app.js 中注册 sw，与 sw 通信
+- 如果实现复杂可标记为P2，先做P1-1和P1-2
+
+【技术要求】
+- 保持现有架构：Flask + SQLite + Vue 3 CDN + SortableJS
+- 所有新增代码加中文注释
+- 修改 database.py 时注意数据库迁移：用户已有真实数据，不能丢
+- 保持弹出窗口模式的兼容
+
+【请先回答】
+动手前先告诉我：
+1. schedule_results 表结构设计（完整字段和SQL）
+2. 数据库迁移方案（已有用户数据，如何安全加表/加字段）
+3. P1三项的可行性评估和预估改动范围
+4. 你建议的实施顺序
+
+确认后开始改代码。

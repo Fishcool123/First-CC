@@ -1,0 +1,242 @@
+/* style.css — PC智能任务助理 全局样式 */
+/* 设计思路：卡片式布局 + 柔和配色 + 最小化视觉噪音 */
+
+/* ── CSS 变量 ──────────────────────────────────────────── */
+:root {
+    --bg:        #f5f5f8;
+    --card-bg:   #ffffff;
+    --primary:   #4f6ef7;
+    --primary-h: #3b5de7;
+    --success:   #34c759;
+    --danger:    #ff3b30;
+    --warning:   #fff3cd;
+    --text:      #1d1d1f;
+    --text-sec:  #6e6e73;
+    --border:    #e5e5ea;
+    --radius:    12px;
+    --shadow:    0 1px 3px rgba(0,0,0,.06);
+}
+
+/* ── 全局重置 ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+/* ── 顶栏 ──────────────────────────────────────────────── */
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 24px;
+    background: var(--card-bg);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 10;
+}
+.topbar h1 { font-size: 20px; font-weight: 700; }
+.topbar-actions { display: flex; gap: 8px; }
+
+/* ── 三栏主网格 ────────────────────────────────────────── */
+.main-grid {
+    display: grid;
+    grid-template-columns: 320px 1fr 380px;
+    gap: 20px;
+    padding: 20px 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+/* ── 面板 & 卡片 ───────────────────────────────────────── */
+.panel { display: flex; flex-direction: column; gap: 16px; }
+.card {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    padding: 20px;
+    box-shadow: var(--shadow);
+}
+.card h2 { font-size: 16px; margin-bottom: 14px; color: var(--text); }
+.card h3 { font-size: 14px; margin-bottom: 10px; }
+.card-warning { background: var(--warning); border: 1px solid #ffc107; }
+.hint { font-size: 13px; color: var(--text-sec); }
+
+/* ── 表单 ──────────────────────────────────────────────── */
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 13px; color: var(--text-sec); margin-bottom: 4px; }
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color .2s;
+}
+.form-group input:focus,
+.form-group select:focus { border-color: var(--primary); }
+.form-row { display: flex; gap: 12px; }
+.form-row .form-group { flex: 1; }
+.input-sm { padding: 4px 8px !important; font-size: 13px !important; width: auto !important; }
+
+/* ── 按钮 ──────────────────────────────────────────────── */
+.btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 8px 16px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card-bg); color: var(--text);
+    font-size: 14px; cursor: pointer; transition: all .15s;
+    white-space: nowrap;
+}
+.btn:hover { background: #f0f0f5; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.btn-primary:hover { background: var(--primary-h); }
+.btn-sm { padding: 4px 10px; font-size: 13px; }
+.btn-block { width: 100%; margin-top: 8px; }
+.btn-danger { color: var(--danger); border-color: transparent; }
+.btn-danger:hover { background: #fff0f0; }
+.btn-success { color: var(--success); border-color: transparent; }
+.btn-success:hover { background: #f0fff4; }
+
+/* ── 可用时段行 ────────────────────────────────────────── */
+.avail-row {
+    display: flex; align-items: center; gap: 6px;
+    margin-bottom: 8px; font-size: 14px;
+}
+
+/* ── 排程列表 ──────────────────────────────────────────── */
+.schedule-list { list-style: none; }
+.schedule-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 6px;
+    background: #f0f4ff; border-radius: 8px;
+    font-size: 14px;
+}
+.sched-time { font-weight: 600; color: var(--primary); min-width: 85px; }
+.sched-slot-tag {
+    font-size: 11px; background: var(--primary); color: #fff;
+    padding: 1px 6px; border-radius: 4px;
+}
+.sched-title { flex: 1; }
+.sched-prio { color: #f5a623; font-size: 12px; }
+.sched-dur { color: var(--text-sec); font-size: 12px; }
+
+/* ── 任务列表 ──────────────────────────────────────────── */
+.task-list { list-style: none; }
+.task-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 12px; margin-bottom: 4px;
+    background: var(--card-bg); border: 1px solid var(--border);
+    border-radius: 8px; transition: box-shadow .15s;
+}
+.task-item:hover { box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+.task-dragging { opacity: .5; background: #e8ecff; }
+.drag-handle {
+    cursor: grab; color: #ccc; font-size: 18px;
+    user-select: none; line-height: 1;
+}
+.drag-handle:active { cursor: grabbing; }
+.task-body { flex: 1; min-width: 0; }
+.task-title {
+    font-size: 14px; font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.task-meta { display: flex; gap: 10px; font-size: 12px; color: var(--text-sec); margin-top: 2px; }
+.task-actions { display: flex; gap: 4px; flex-shrink: 0; }
+
+/* 优先级星星色 */
+.prio { font-size: 11px; }
+.prio-1 { color: #ff3b30; }   /*  最高 — 红 */
+.prio-2 { color: #ff9500; }   /*  较高 — 橙 */
+.prio-3 { color: #f5a623; }   /*  普通 — 黄 */
+.prio-4 { color: #8e8e93; }   /*  较低 — 灰 */
+.prio-5 { color: #c7c7cc; }   /*  最低 — 浅灰 */
+
+.deadline { color: var(--text-sec); }
+.deadline-soon { color: var(--danger); font-weight: 600; }
+
+/* 已完成 */
+.done-list { opacity: .7; }
+.done-item { background: #f9f9fb; }
+.done-title { text-decoration: line-through; color: var(--text-sec); }
+
+/* ── 徽章 ──────────────────────────────────────────────── */
+.badge {
+    display: inline-block; font-size: 12px; font-weight: 600;
+    background: var(--primary); color: #fff;
+    padding: 1px 8px; border-radius: 10px; vertical-align: middle;
+}
+.badge-done { background: var(--success); }
+
+/* ── 空状态 ────────────────────────────────────────────── */
+.empty-state {
+    text-align: center; padding: 24px 16px;
+    color: var(--text-sec); font-size: 14px;
+}
+
+/* ── 底栏 ──────────────────────────────────────────────── */
+.bottombar {
+    display: flex; justify-content: center; gap: 10px;
+    padding: 10px 24px; font-size: 13px; color: var(--text-sec);
+    border-top: 1px solid var(--border);
+    background: var(--card-bg);
+}
+.sep { color: #d1d1d6; }
+
+/* ── 模态弹窗 ──────────────────────────────────────────── */
+.modal-overlay {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,.4);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+}
+.modal {
+    background: var(--card-bg);
+    border-radius: var(--radius);
+    padding: 24px;
+    width: 420px; max-width: 90vw;
+    box-shadow: 0 8px 32px rgba(0,0,0,.15);
+}
+.modal h3 { font-size: 16px; margin-bottom: 16px; }
+.modal-actions {
+    display: flex; justify-content: flex-end; gap: 8px;
+    margin-top: 16px;
+}
+
+/* ── 间隙选择列表 ──────────────────────────────────────── */
+.gap-list { list-style: none; max-height: 200px; overflow-y: auto; }
+.gap-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; margin-bottom: 4px;
+    border: 2px solid var(--border); border-radius: 8px;
+    cursor: pointer; transition: border-color .15s;
+    font-size: 14px;
+}
+.gap-item:hover { border-color: var(--primary); }
+.gap-selected { border-color: var(--primary); background: #f0f4ff; }
+.gap-slot {
+    font-size: 12px; font-weight: 600;
+    background: var(--primary); color: #fff;
+    padding: 1px 8px; border-radius: 4px;
+}
+.gap-time { font-weight: 600; }
+.gap-dur { color: var(--text-sec); font-size: 13px; }
+
+/* ── 手动分配标记 ──────────────────────────────────────── */
+.sched-manual-tag {
+    font-size: 11px; background: #ff9500; color: #fff;
+    padding: 1px 6px; border-radius: 50%;
+    font-weight: 700;
+}
+
+/* ── 响应式：窄屏单栏 ──────────────────────────────────── */
+@media (max-width: 900px) {
+    .main-grid {
+        grid-template-columns: 1fr;
+    }
+}
