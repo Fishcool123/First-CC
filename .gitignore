@@ -16,6 +16,12 @@ __pycache__/
 # SQLite databases
 *.db
 
+# Application logs
+desktop*.log
+
+# IDE config
+.idea/
+
 # System files
 Thumbs.db
 Desktop.ini
