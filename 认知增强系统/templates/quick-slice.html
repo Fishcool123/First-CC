@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=350, height=280">
+    <title>快速记录</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        .quick-slice-card {
+            background: #16213e;
+            border-radius: 16px;
+            padding: 24px;
+            width: 320px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .quick-slice-card h2 {
+            font-size: 16px;
+            margin-bottom: 16px;
+            color: #a0b0ff;
+        }
+        .section-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #86868b;
+            text-transform: uppercase;
+            letter-spacing: .06em;
+            margin-bottom: 6px;
+        }
+        .mood-buttons {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+        .mood-btn {
+            flex: 1;
+            padding: 8px 0;
+            border: 1.5px solid #2a2a4a;
+            border-radius: 10px;
+            background: transparent;
+            color: #e0e0e0;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-align: center;
+        }
+        .mood-btn:hover { border-color: #a0b0ff; }
+        .mood-btn.selected { border-color: #a0b0ff; background: rgba(124,143,245,0.15); }
+
+        .energy-buttons {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+        .energy-btn {
+            flex: 1;
+            padding: 8px 0;
+            border: 1.5px solid #2a2a4a;
+            border-radius: 10px;
+            background: transparent;
+            color: #e0e0e0;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.15s;
+            text-align: center;
+        }
+        .energy-btn:hover { border-color: #a0b0ff; }
+        .energy-btn.selected { border-color: #a0b0ff; background: rgba(124,143,245,0.15); }
+
+        .note-input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1.5px solid #2a2a4a;
+            border-radius: 10px;
+            background: #0f0f23;
+            color: #e0e0e0;
+            font-size: 13px;
+            outline: none;
+            margin-bottom: 12px;
+            font-family: inherit;
+        }
+        .note-input:focus { border-color: #a0b0ff; }
+
+        .submit-btn {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 12px;
+            background: #7c8ff5;
+            color: #fff;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .submit-btn:hover { background: #6a7ce6; }
+        .submit-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+<div class="quick-slice-card">
+    <h2>快速记录</h2>
+
+    <div class="section-label">情绪</div>
+    <div class="mood-buttons">
+        <button class="mood-btn" data-mood="愉快" onclick="selectMood(this)">&#x1F60A;</button>
+        <button class="mood-btn" data-mood="平静" onclick="selectMood(this)">&#x1F610;</button>
+        <button class="mood-btn" data-mood="焦虑" onclick="selectMood(this)">&#x1F61F;</button>
+        <button class="mood-btn" data-mood="愤怒" onclick="selectMood(this)">&#x1F621;</button>
+        <button class="mood-btn" data-mood="疲惫" onclick="selectMood(this)">&#x1F634;</button>
+    </div>
+
+    <div class="section-label">精力</div>
+    <div class="energy-buttons">
+        <button class="energy-btn" data-energy="1" onclick="selectEnergy(this)">1</button>
+        <button class="energy-btn" data-energy="2" onclick="selectEnergy(this)">2</button>
+        <button class="energy-btn" data-energy="3" onclick="selectEnergy(this)">3</button>
+        <button class="energy-btn" data-energy="4" onclick="selectEnergy(this)">4</button>
+        <button class="energy-btn" data-energy="5" onclick="selectEnergy(this)">5</button>
+    </div>
+
+    <input class="note-input" id="noteInput" type="text" placeholder="备注（可选）" onkeydown="if(event.key==='Enter')submitQuickSlice()">
+
+    <button class="submit-btn" id="submitBtn" onclick="submitQuickSlice()">记录</button>
+</div>
+
+<script>
+let selectedMood = null;
+let selectedEnergy = 3;
+
+function selectMood(btn) {
+    document.querySelectorAll('.mood-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedMood = btn.dataset.mood;
+}
+
+function selectEnergy(btn) {
+    document.querySelectorAll('.energy-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedEnergy = parseInt(btn.dataset.energy);
+}
+
+// 默认选中精力 3
+document.querySelector('.energy-btn[data-energy="3"]').classList.add('selected');
+
+async function submitQuickSlice() {
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+
+    try {
+        const body = {
+            timestamp: new Date().toISOString().slice(0, 19).replace('T', ' '),
+            activity_desc: '快速记录',
+            mood_tags: selectedMood ? [selectedMood] : [],
+            energy_level: selectedEnergy,
+            notes: document.getElementById('noteInput').value.trim(),
+            granularity: 'manual',
+        };
+        const res = await fetch('/api/slices', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) throw new Error('提交失败');
+        btn.textContent = '已记录 ✓';
+        setTimeout(() => window.close(), 800);
+    } catch (e) {
+        btn.textContent = '失败，重试';
+        btn.disabled = false;
+    }
+}
+</script>
+</body>
+</html>

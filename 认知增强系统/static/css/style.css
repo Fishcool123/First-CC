@@ -819,6 +819,17 @@ input[type="range"]::-webkit-slider-thumb:hover {
     border-left: 3px solid var(--primary-bar);
 }
 
+.slice-auto {
+    border-left: 3px solid #d1d1d6;
+    opacity: 0.85;
+}
+
+.slice-auto-icon {
+    font-size: 14px;
+    margin-right: 4px;
+    opacity: 0.7;
+}
+
 /* ═══════════════════════════════════════════════════════
    15. DEVICE LOGS
    ═══════════════════════════════════════════════════════ */
@@ -1179,3 +1190,163 @@ input[type="range"]::-webkit-slider-thumb:hover {
     .main-grid, .main-grid-slices { grid-template-columns: 1fr; }
     .sidebar { display: none; }
 }
+
+/* ═══════════════════════════════════════════════════════
+   25. RULES — 开关 + 行
+   ═══════════════════════════════════════════════════════ */
+
+.rule-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 13px;
+}
+
+.rule-row:last-child { border-bottom: none; }
+
+.rule-name { font-weight: 500; flex: 1; }
+.rule-desc { color: var(--text-muted); font-size: 12px; }
+
+.rule-preset-badge {
+    font-size: 10px;
+    background: var(--primary-bg);
+    color: var(--primary);
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-weight: 600;
+}
+
+/* Toggle switch */
+.rule-toggle {
+    position: relative;
+    display: inline-block;
+    width: 36px;
+    height: 20px;
+    flex-shrink: 0;
+}
+
+.rule-toggle input { opacity: 0; width: 0; height: 0; }
+
+.rule-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    inset: 0;
+    background: var(--border);
+    border-radius: 20px;
+    transition: background var(--t-normal);
+}
+
+.rule-toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform var(--t-normal);
+}
+
+.rule-toggle input:checked + .rule-toggle-slider {
+    background: var(--primary);
+}
+
+.rule-toggle input:checked + .rule-toggle-slider::before {
+    transform: translateX(16px);
+}
+
+/* ═══════════════════════════════════════════════════════
+   26. ENERGY PROFILE — 柱状图 + 趋势
+   ═══════════════════════════════════════════════════════ */
+
+.energy-profile-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.energy-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.energy-bar-label {
+    font-size: 12px;
+    font-weight: 600;
+    min-width: 36px;
+}
+
+.energy-bar-track {
+    flex: 1;
+    height: 20px;
+    background: var(--bg);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.energy-bar-fill {
+    height: 100%;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: width 0.5s var(--ease-out);
+    min-width: 50px;
+}
+
+.energy-high { background: linear-gradient(90deg, #34c759, #28a745); }
+.energy-mid   { background: linear-gradient(90deg, #ff9500, #ff8c00); }
+.energy-low   { background: linear-gradient(90deg, #ff3b30, #e03020); }
+
+.energy-bar-count {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 40px;
+    text-align: right;
+}
+
+/* 趋势散点 */
+.energy-trend-chart {
+    margin-top: 12px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.energy-trend-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    border-bottom: 1px solid var(--border-light);
+    font-size: 11px;
+}
+
+.energy-trend-date {
+    min-width: 40px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.energy-trend-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.energy-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+}
+
+.energy-morning   { background: #ff9500; }
+.energy-afternoon { background: #007aff; }
+.energy-evening   { background: #af52de; }

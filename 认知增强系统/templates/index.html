@@ -84,6 +84,15 @@
                                 <label>截止时间（可选）</label>
                                 <input v-model="taskForm.deadline" type="datetime-local">
                             </div>
+                            <div class="form-group">
+                                <label>重复</label>
+                                <select v-model="taskForm.recurrence">
+                                    <option value="none">不重复</option>
+                                    <option value="daily">每天</option>
+                                    <option value="weekly">每周</option>
+                                    <option value="weekday">工作日</option>
+                                </select>
+                            </div>
                             <button class="btn btn-primary btn-block" @click="submitTask">添加任务</button>
                         </section>
                         <section class="card">
@@ -281,6 +290,41 @@
                                 <span class="legend-label">多</span>
                             </div>
                         </section>
+                        <section class="card">
+                            <h2>精力趋势</h2>
+                            <div v-if="energyProfile.length === 0" class="hint" style="padding:8px 0">
+                                加载中…
+                            </div>
+                            <div v-else>
+                                <div class="energy-profile-bars">
+                                    <div v-for="p in energyProfile" :key="p.period" class="energy-bar-row">
+                                        <span class="energy-bar-label">{{ periodLabel(p.period) }}</span>
+                                        <div class="energy-bar-track">
+                                            <div class="energy-bar-fill"
+                                                 :class="p.avg_energy && p.avg_energy >= 3.5 ? 'energy-high' : p.avg_energy && p.avg_energy < 2.5 ? 'energy-low' : 'energy-mid'"
+                                                 :style="'width:' + energyBarWidth(p.avg_energy) + '%'">
+                                                {{ p.avg_energy ? p.avg_energy.toFixed(1) : '无数据' }}
+                                            </div>
+                                        </div>
+                                        <span class="energy-bar-count">{{ p.sample_count }} 条</span>
+                                    </div>
+                                </div>
+                                <button class="btn btn-sm" @click="refreshEnergyProfile" style="margin-top:8px">刷新精力画像</button>
+                                <div v-if="energyTrend.length > 1" class="energy-trend-chart">
+                                    <div v-for="day in energyTrend.filter(d => d.morning || d.afternoon || d.evening)" :key="day.date" class="energy-trend-row">
+                                        <span class="energy-trend-date">{{ energyTrendLabel(day.date) }}</span>
+                                        <div class="energy-trend-dots">
+                                            <span v-if="day.morning" class="energy-dot energy-morning" :title="'上午: ' + day.morning.toFixed(1)"></span>
+                                            <span v-if="day.afternoon" class="energy-dot energy-afternoon" :title="'下午: ' + day.afternoon.toFixed(1)"></span>
+                                            <span v-if="day.evening" class="energy-dot energy-evening" :title="'晚上: ' + day.evening.toFixed(1)"></span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-if="energyTrend.length <= 1" class="hint" style="margin-top:8px">
+                                    精力数据不足，请多记录几天切片
+                                </div>
+                            </div>
+                        </section>
                     </aside>
 
                     <!-- 右栏：切片列表 + 设备日志 -->
@@ -297,11 +341,14 @@
                             <div v-if="slices.length === 0" class="empty-state">今天还没有手动切片</div>
                             <ul v-else class="slice-list">
                                 <li v-for="slc in slices" :key="slc.id" class="slice-item"
-                                    :class="{ 'slice-coarse': slc.granularity === 'coarse' }"
+                                    :class="{ 'slice-coarse': slc.granularity === 'coarse', 'slice-auto': slc.granularity === 'auto' }"
                                     :style="{ animationDelay: (slices.indexOf(slc) * 40) + 'ms' }">
                                     <div class="slice-time">{{ formatTime(slc.timestamp) }}</div>
                                     <div class="slice-body">
-                                        <div class="slice-desc">{{ slc.activity_desc }}</div>
+                                        <div class="slice-desc">
+                                            <span v-if="slc.granularity === 'auto'" class="slice-auto-icon">&#x1F916;</span>
+                                            {{ slc.activity_desc }}
+                                        </div>
                                         <div class="slice-tags">
                                             <span v-for="tag in slc.mood_tags" :key="tag" class="tag-chip tag-active"
                                                   :style="{background: tagColor(tag), color:'#fff'}">
@@ -377,6 +424,34 @@
                             手动清理设备日志
                         </button>
                     </div>
+                    <div class="card">
+                        <h2>自动化规则</h2>
+                        <p class="hint">控制系统的自动化通知和提醒规则</p>
+                        <div id="rulesList" style="margin-top:12px" v-if="currentTab === 'settings'">
+                            <div v-for="rule in rules" :key="rule.id" class="rule-row">
+                                <label class="rule-toggle">
+                                    <input type="checkbox" :checked="rule.enabled" @change="toggleRuleItem(rule)">
+                                    <span class="rule-toggle-slider"></span>
+                                </label>
+                                <span class="rule-name">{{ rule.name }}</span>
+                                <span class="rule-desc">{{ formatRuleParams(rule) }}</span>
+                                <span v-if="rule.is_preset" class="rule-preset-badge">预设</span>
+                            </div>
+                            <div v-if="!rules || rules.length === 0" class="hint">加载中…</div>
+                        </div>
+                    </div>
+                    <div class="card" v-if="pendingPrompt">
+                        <h2>提示</h2>
+                        <p>{{ pendingPrompt.message }}</p>
+                        <button class="btn btn-sm btn-primary" @click="pendingPrompt=null" style="margin-top:8px">知道了</button>
+                    </div>
+                    <div class="card">
+                        <h2>自动切片</h2>
+                        <p class="hint">每天 23:55 自动根据设备日志生成切片</p>
+                        <button class="btn btn-sm btn-primary" style="margin-top:12px" @click="generateYesterdaySlices">
+                            立即生成昨日切片
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -410,6 +485,15 @@
             <div class="form-group">
                 <label>截止时间（可选）</label>
                 <input v-model="editForm.deadline" type="datetime-local">
+            </div>
+            <div class="form-group">
+                <label>重复</label>
+                <select v-model="editForm.recurrence">
+                    <option value="none">不重复</option>
+                    <option value="daily">每天</option>
+                    <option value="weekly">每周</option>
+                    <option value="weekday">工作日</option>
+                </select>
             </div>
             <div v-if="editTaskWasScheduled" class="hint" style="color:#d4a017;margin-bottom:12px;font-weight:500">
                 该任务已排程，修改后请重新点击「重新排程」

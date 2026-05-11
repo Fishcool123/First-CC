@@ -1,0 +1,7 @@
+flask
+psutil
+pywin32
+pystray
+plyer
+pillow
+pyinstaller

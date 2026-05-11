@@ -25,3 +25,10 @@ desktop*.log
 # System files
 Thumbs.db
 Desktop.ini
+
+# Node modules
+node_modules/
+
+# Application data (databases, settings)
+data/
+*.db

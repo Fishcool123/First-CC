@@ -3,7 +3,7 @@ desktop.py — 桌面应用入口：Edge --app 原生窗口 + pystray 系统托�
 启动方式：python desktop.py  或  双击 start.bat
 """
 import os, sys, io, threading, time, subprocess, signal, traceback
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # ── 确保 stdout 支持 UTF-8 ──────────────────────────────
@@ -109,8 +109,9 @@ def periodic_db_cleanup():
 # ══════════════════════════════════════════════════════════
 
 import database as db
-from app import app
+from app import app, init_rules_endpoint, start_rule_timer, start_auto_slice_timer, start_recurring_tasks_timer
 from monitor import start_monitor, stop_monitor
+from auto_slice_generator import generate_auto_slices
 
 
 # ══════════════════════════════════════════════════════════
@@ -162,6 +163,18 @@ def kill_edge_app():
 
 def on_tray_show(icon, item):
     launch_edge()
+
+
+def on_tray_quick_slice(icon, item):
+    """托盘右键 → 快速记录：打开一个超轻量 Edge 窗口"""
+    try:
+        subprocess.Popen(
+            [EDGE_PATH, f"--app={APP_URL}/quick-slice",
+             "--window-size=350,300", "--new-window"],
+            creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0,
+        )
+    except Exception as e:
+        log(f"快速记录窗口启动失败: {e}")
 
 
 def on_tray_exit(icon, item):
@@ -282,10 +295,29 @@ def main():
     # 初始化数据库
     try:
         db.init_db()
+        init_rules_endpoint()
         log("数据库初始化完成")
     except Exception:
         log_error()
         sys.exit(1)
+
+    # 检测昨日是否已生成自动切片
+    try:
+        yesterday = (datetime.now() - timedelta(days=1)).date()
+        existing = db.get_auto_slices_count_for_date(yesterday)
+        if existing == 0:
+            count = generate_auto_slices(yesterday, db)
+            log(f"补生成昨日自动切片：{count} 条")
+    except Exception:
+        log_error()
+
+    # 生成今日重复任务
+    try:
+        count = db.generate_recurring_tasks_today()
+        if count:
+            log(f"重复任务生成：{count} 条")
+    except Exception:
+        log_error()
 
     # 1. Flask 后台线程
     log("启动 Flask...")
@@ -320,6 +352,8 @@ def main():
         "CogEnhancer", create_tray_image(), APP_NAME,
         menu=pystray.Menu(
             pystray.MenuItem(u"显示窗口", on_tray_show, default=True),
+            pystray.MenuItem(u"⚡ 快速记录", on_tray_quick_slice),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem(u"退出", on_tray_exit),
         ),
     )
@@ -329,6 +363,27 @@ def main():
     # 4. 定期 DB 清理
     try:
         periodic_db_cleanup()
+    except Exception:
+        log_error()
+
+    # 4.5 规则引擎定时器
+    try:
+        start_rule_timer()
+        log("规则引擎定时器就绪")
+    except Exception:
+        log_error()
+
+    # 4.6 自动切片定时器
+    try:
+        start_auto_slice_timer()
+        log("自动切片定时器就绪")
+    except Exception:
+        log_error()
+
+    # 4.7 重复任务定时器
+    try:
+        start_recurring_tasks_timer()
+        log("重复任务定时器就绪")
     except Exception:
         log_error()
 
