@@ -1,0 +1,49 @@
+# Agent Thinker — LLM 模型配置
+# 三个 Tier，按 privacy_level 和 task_complexity 路由
+
+local:
+  model: qwen3.5-9b
+  endpoint: http://localhost:8080/v1
+  api_key: not-needed
+  max_tokens: 256
+  temperature: 0.7
+  use_for:
+    - 健康数据推理
+    - 隐私敏感判断（窗口标题/剪贴板/URL/通知）
+    - 高频简单决策（事件触发 Thinker 调用）
+    - 所有 Persona 的日常对话
+  priority: 1  # 默认首选
+
+cloud_primary:
+  model: deepseek-v4-pro
+  endpoint: https://api.deepseek.com/v1
+  api_key: ${DEEPSEEK_API_KEY}
+  max_tokens: 2048
+  temperature: 0.7
+  use_for:
+    - 脱敏聚合趋势分析
+    - 长上下文总结
+    - 跨切片模式发现
+  priority: 2
+  privacy_note: "发送前必须脱敏——去除窗口标题/具体URL/剪贴板原文/通知内容"
+
+cloud_multimodal:
+  model: qwen3.6-plus
+  endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key: ${DASHSCOPE_API_KEY}
+  max_tokens: 2048
+  temperature: 0.7
+  use_for:
+    - 图像理解
+    - 文档分析
+    - 多模态场景
+  priority: 3
+  privacy_note: "仅用于用户主动上传的图片/文档，不自动采集"
+
+# Thinker 调用策略
+routing:
+  default: local                                    # 默认使用本地 9B
+  fallback_order: [local, cloud_primary]            # 本地不可用时降级到云端
+  health_check_interval: 60                         # 每 60 秒检查本地端点连通性
+  timeout: 15                                       # 单次调用超时（秒）
+  retry: 2                                          # 超时后重试次数
