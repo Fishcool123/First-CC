@@ -12,6 +12,8 @@ import threading
 import ctypes
 from datetime import datetime
 
+from agent_bridge import bridge
+
 # ═══════════════════════════════════════════════════════════
 # Thinker 集成（Phase 2）
 # ═══════════════════════════════════════════════════════════
@@ -72,8 +74,9 @@ def _try_init_notification_listener():
         print("[启动] 系统通知监听已启用（winrt）")
     except ImportError:
         print("[P2-3] 系统通知监听不可用：winrt 未安装")
-        print("       如需启用：pip install winrt")
-        print("       然后：Windows 设置 → 隐私 → 通知 → 允许应用访问通知")
+        print("       如需启用，运行以下命令：")
+        print("       pip install winrt-Windows.Foundation winrt-Windows.UI.Notifications winrt-Windows.ApplicationModel")
+        print("       然后：Windows 设置 → 隐私和安全性 → 通知 → 允许应用访问通知")
         print("       当前版本跳过通知监听，Agent 其他功能正常")
     except Exception as e:
         print(f"[P2-3] 系统通知监听初始化异常: {e}")
@@ -437,13 +440,12 @@ def _print_thinker_result(r):
 # 主循环
 # ═══════════════════════════════════════════════════════════
 
-def run_agent(status_cb=None, thinker=None, mode_cb=None):
+def run_agent(thinker=None):
     """启动 Agent 主循环（可被 agent_ui.py 以线程调用）。
 
+    Agent 通过 agent_bridge.bridge 信号与 UI 通信（线程安全）。
     参数:
-        status_cb:  可选回调，签名为 (color, breath, text, persona)
-        thinker:    可选外部 Thinker 实例（共享给聊天窗使用）
-        mode_cb:    可选回调，签名为 (mode)，用于 IDE 自动切换模式
+        thinker: 可选外部 Thinker 实例（共享给聊天窗使用）
     """
     # 确保管道输出不缓冲、编码正确
     try:
@@ -473,12 +475,15 @@ def run_agent(status_cb=None, thinker=None, mode_cb=None):
             test_resp = thinker.client.chat.completions.create(
                 model=thinker.model,
                 messages=[{"role": "user", "content": "ping"}],
-                max_tokens=4, timeout=8,
+                max_tokens=4, timeout=5,
             )
             test_text = test_resp.choices[0].message.content.strip()[:20]
             print(f"[启动] Thinker 就绪 | 9B 端点在线 ({test_text})")
         except Exception as e:
-            print(f"[警告] Thinker 初始化失败: {e}")
+            print(f"[警告] Thinker 连接失败: {e}")
+            print("       Agent 将以静默模式运行（仅数据采集，无主动发言）")
+            print("       [启动] 请确认 llama.cpp 已启动且 llm_config.yaml 配置正确")
+            thinker = None
     elif thinker:
         print(f"[启动] Thinker 已共享（来自 UI 线程）")
 
@@ -524,10 +529,10 @@ def run_agent(status_cb=None, thinker=None, mode_cb=None):
     SPEAK_COOLDOWN = 10 * 60      # 发言冷却期：10 分钟
     MIN_WINDOW_DURATION = 2 * 60  # 窗口最短持续时间：2 分钟
 
-    # IDE 自动切换（Fix 3）
-    ide_since = None      # 首次检测到 IDE 的时间戳
-    ide_sleep_sent = False  # 是否已发送过 sleep 指令
-    IDE_THRESHOLD = 5 * 60  # IDE 连续 5 分钟后自动休眠
+    # IDE 自动切换：连续使用 IDE 15 分钟后降低呼吸频率（不完全休眠）
+    ide_since = None
+    ide_sleep_sent = False
+    IDE_THRESHOLD = 15 * 60
 
     print("[启动] 主循环，等待事件...\n")
 
@@ -546,30 +551,27 @@ def run_agent(status_cb=None, thinker=None, mode_cb=None):
             batch_spoke = False  # 同一批次只允许一次 speak
 
             if batch_in_cooldown and events:
-                remaining = int(SPEAK_COOLDOWN - (time.time() - last_speak_time))
-                # 仅对非 clipboard 事件计数（剪贴板本来就不送 Thinker）
                 actionable = [e for e in events if e["type"] != "clipboard_change"]
                 if actionable:
+                    remaining = int(SPEAK_COOLDOWN - (time.time() - last_speak_time))
                     print(f"[冷却] 距上次发言 {remaining // 60} 分 {remaining % 60} 秒，"
                           f"跳过 {len(actionable)} 个事件\n")
 
             for ev in events:
                 ctx = observer.get_context()
-                # 补充事件特有字段
                 ctx["event_type"] = ev["type"]
                 if ev["type"] == "window_switch":
                     ctx["previous_window"] = ev["from"]
                     ctx["window_duration"] = ev.get("prev_duration", "?")
                 elif ev["type"] == "period_change":
                     ctx["previous_period"] = ev["from"]
+                elif ev["type"] == "clipboard_change":
+                    # 剪贴板内容加入上下文（脱敏交给 Thinker）
+                    ctx["clipboard_content"] = ev.get("content", "")[:500]
+                    ctx["clipboard_length"] = ev.get("length", 0)
 
-                # 终端输出：事件摘要
-                label = EVENT_LABELS.get(ev["type"], ev["type"])
-                print(f"[{label}] ─ {ev['timestamp']}")
-                print(format_context(ctx))
+                # ── IDE 检测（不依赖详细日志）──
                 if ev["type"] == "window_switch":
-                    print(f"  切换: {ev['from']}  →  {ev['to']}")
-                    # ── IDE 自动切换检测（Fix 3）──
                     to_key = ev["to"]
                     parts = to_key.split("|", 1)
                     to_proc = parts[0] if parts else ""
@@ -578,75 +580,66 @@ def run_agent(status_cb=None, thinker=None, mode_cb=None):
                         if ide_since is None:
                             ide_since = time.time()
                             ide_sleep_sent = False
-                            print(f"  [IDE] 检测到 IDE 窗口，开始计时（{IDE_THRESHOLD // 60} 分钟后自动休眠）")
+                            print(f"  [IDE] 检测到 IDE 窗口，{IDE_THRESHOLD // 60} 分钟后降低呼吸")
                     else:
                         if ide_since is not None:
-                            if mode_cb:
-                                mode_cb("accompany")
+                            bridge.mode_requested.emit("accompany")
                             print("  [IDE] 离开 IDE → 自动恢复陪伴态")
                             ide_since = None
                             ide_sleep_sent = False
-                elif ev["type"] == "period_change":
-                    frm = PERIOD_LABELS.get(ev["from"], ev["from"])
-                    to = PERIOD_LABELS.get(ev["to"], ev["to"])
-                    print(f"  从 {frm} 进入 {to}")
-                elif ev["type"] == "clipboard_change":
-                    print(f"  文本长度: {ev['length']} 字符")
-                print()
 
                 # ── 记忆增强 ──
                 if HAS_MEMORY:
                     enrich_context(ctx)
 
-                # ── 事件过滤（P0-2: 窗口时长检查）──
+                # ── 事件过滤 ──
                 skip_reason = None
                 if ev["type"] == "window_switch":
                     dur_str = ev.get("prev_duration", "")
                     dur_sec = _parse_duration_seconds(dur_str)
                     if dur_sec is not None and dur_sec < MIN_WINDOW_DURATION:
                         skip_reason = f"窗口仅活跃 {dur_str}，跳过"
-                elif ev["type"] == "clipboard_change":
-                    skip_reason = "剪贴板变化不送 Thinker"
 
                 # ── Thinker + Actor 管道 ──
                 if thinker and not skip_reason and not batch_in_cooldown and not batch_spoke:
                     if 0 <= datetime.now().hour < 6:
-                        print("  [Agent] SILENT | L0 | 凌晨静默（0-6时）\n")
+                        if ev["type"] != "clipboard_change":
+                            print("  [Agent] SILENT | L0 | 凌晨静默\n")
                     else:
                         try:
                             persona = route_persona(ev["type"], ctx)
                             result = thinker.think(ctx, persona)
                             last_event_time = time.time()
-                            _print_thinker_result(result)
 
-                            # 更新悬浮窗
-                            if status_cb:
-                                if result["should_speak"]:
-                                    status_cb(color="orange", breath="fast",
-                                              text=result["message"][:40],
-                                              persona=persona)
-                                elif result["autonomy_level"] == "L0":
-                                    status_cb(color="blue", breath="slow",
-                                              persona=persona)
+                            # 仅在 Thinker 产出有意义的决策时输出日志
+                            if result["should_speak"] or result["autonomy_level"] in ("L2", "L3"):
+                                label = EVENT_LABELS.get(ev["type"], ev["type"])
+                                print(f"[{label}] {ev['timestamp']}")
+                                _print_thinker_result(result)
 
                             if result["should_speak"]:
+                                bridge.status_updated.emit("orange", "fast",
+                                                          result["message"][:40])
+                                bridge.message_added.emit(persona, result["message"])
                                 actor_speak(result["message"], persona)
                                 last_speak_time = time.time()
                                 batch_spoke = True
+                            elif result["autonomy_level"] == "L0":
+                                bridge.status_updated.emit("blue", "slow", "")
+
                             if result["autonomy_level"] in ("L2", "L3"):
                                 actor_record_slice(ctx, result.get("message", ""))
-                            print()
+                                print()
                         except Exception as e:
                             print(f"  [Thinker 错误] {e}\n")
                 elif skip_reason:
-                    print(f"  [过滤] {skip_reason}\n")
+                    pass  # 静默跳过短暂窗口，不刷日志
 
             # ── IDE 自动休眠阈值检查（Fix 3）──
             if ide_since is not None and not ide_sleep_sent \
                     and (time.time() - ide_since) >= IDE_THRESHOLD:
-                if mode_cb:
-                    mode_cb("sleep")
-                print("  [IDE] 连续使用 IDE 超 5 分钟 → 自动休眠\n")
+                bridge.status_updated.emit("blue", "slow", "编码中，静默陪伴...")
+                print("  [IDE] 编码超过 15 分钟 → 降低呼吸频率（不进入休眠）\n")
                 ide_sleep_sent = True
 
             # 5 分钟兜底心跳
@@ -679,14 +672,12 @@ def run_agent(status_cb=None, thinker=None, mode_cb=None):
                             result = thinker.think(ctx, persona)
                             _print_thinker_result(result)
 
-                            if status_cb:
-                                if result["should_speak"]:
-                                    status_cb(color="orange", breath="fast",
-                                              text=result["message"][:40],
-                                              persona=persona)
-                                else:
-                                    status_cb(color="blue", breath="slow",
-                                              persona=persona)
+                            if result["should_speak"]:
+                                bridge.status_updated.emit("orange", "fast",
+                                                          result["message"][:40])
+                                bridge.message_added.emit(persona, result["message"])
+                            else:
+                                bridge.status_updated.emit("blue", "slow", "")
 
                             if result["should_speak"]:
                                 actor_speak(result["message"], persona)

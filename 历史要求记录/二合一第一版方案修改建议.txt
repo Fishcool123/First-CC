@@ -1,0 +1,30 @@
+计划已审完，以下4处需要在动手前修正：
+
+【必须修正】
+
+1. Q2 数据库迁移：源文件名错误
+   - 计划写的是 ../PC智能任务助理/data.db
+   - 实际文件名是 ../PC智能任务助理/task_assistant.db
+   - 修正 database.py 迁移逻辑中的源路径
+
+【值得注意的，也一并处理】
+
+2. Vue Mixin 变量冲突预防
+   - 两个原 app.js 都有 form / loading / error 等通用变量名
+   - 合并为 tasks.js 和 slices.js 时，各自 data 内的字段可能同名冲突
+   - 措施：合并前先列出两个文件的 data/methods/computed 清单，检查同名项
+   - 同名但不同义的 → 加前缀（如 taskForm / sliceForm）
+   - 同名且可共用的（如 loading）→ 抽到 app.js 主应用里
+
+3. monitor.py 硬编码路径检查
+   - 从 时间切片系统/ 复制到 认知增强系统/ 后，检查：
+     - 数据库路径是否写死了旧相对路径
+     - 通知标题/日志路径是否需要适配新目录
+   - 如有硬编码，改为从 app.config 或环境变量读取
+
+4. CSS 变量命名空间
+   - 两个原 style.css 各自定义了 :root 变量
+   - 合并时可能出现同名变量互相覆盖（如 --primary, --bg, --text）
+   - 措施：任务和切片各自用命名空间前缀
+     :root { --task-primary: ...; --slice-primary: ...; }
+   - 公共变量（字体、圆角、阴影）保留无前缀

@@ -1,0 +1,98 @@
+【背景】
+时间切片系统第一版已完成，位置：First CC/时间切片系统/
+技术栈：Python Flask + SQLite + Vue 3 CDN
+当前为「浏览器弹出窗口」模式，第二版需升级为「原生桌面应用」
+
+【核心变更：桌面应用化】
+使用 pywebview 替代浏览器弹出窗口：
+- 用原生窗口嵌入现有 Flask 前端（Vue代码全部保留不动）
+- 窗口关闭 → 隐藏到系统托盘，后台监控继续运行
+- 右键托盘图标：显示窗口 / 退出（退出时停止监控线程）
+- 原生 Windows 通知替代浏览器 Notification API（用 plyer 库）
+- start.bat 改为启动 pywebview 窗口
+
+架构变化：
+  现在：Flask → 浏览器打开 localhost:xxxx
+  第二版：Flask → pywebview 原生窗口（内嵌同一页面）
+                 └── 系统托盘（关闭→隐藏，监控不中断）
+
+【必须修复的 Bug】
+
+■ Bug #1 🔴 热力图翻月偏移（app.js 约第53行）
+- 原因：computed 属性 heatmapOffset 没有 setter，this.heatmapOffset = ... 静默失败
+- 表现：切换到其他月份时，月初空白格子偏移错误（2月/3月/...全部错位）
+- 修复：把 heatmapOffset 改为 data 属性（加 _offset），在 heatmapCells computed 或月份切换方法中更新；或者给 computed 加 get/set
+- 同时删掉 app.js 第53行 computed 里的副作用赋值 this.heatmapOffset = ...
+
+■ Bug #2 🟡 PC助理数据库文件名错误（database.py 第13行）
+- 当前：'../PC智能任务助理/data.db'
+- 实际：'../PC智能任务助理/task_assistant.db'
+- 修复：改文件名
+
+■ Bug #3 🟡 热力图区分度低
+- 原因：device_usage_logs 数量（每天200+条）碾压手动 slices（每天3-5条）
+- 表现：只要开机就是满格深色，热力图变成「你今天开电脑了吗」
+- 修复：热力图只统计 slices 表的手动切片数；设备日志有无用另一个视觉标记（如格子底部小圆点表示「该日有设备数据」）
+
+■ Bug #4 🟡 时间戳格式不统一
+- monitor.py 第65行：%Y-%m-%d %H:%M（无秒）
+- app.py 第117行：%Y-%m-%d %H:%M:%S（有秒）
+- database.py 查询中混用 T 分隔符和空格分隔符
+- 修复：统一为 YYYY-MM-DD HH:MM:SS
+
+■ Bug #5 🟢 连续记录时时间戳不自动推进（app.js 约126-129行）
+- 表现：切完第一条切片后，第二条切片的时间戳仍是同一时刻
+- 修复：提交成功后自动把时间戳推进到当前时间
+
+【新增功能】
+
+■ 系统托盘
+- 图标：可用简单的 .ico 或 pillow 生成
+- 菜单：显示窗口 / 退出
+- 关闭窗口 = hide()，不是 destroy()
+
+■ 原生 Windows 通知
+- 替代 app.js 中的浏览器 Notification API
+- 后端通过 plyer 发通知（Flask 路由或 monitor.py 直接调用）
+- 通知内容：窗口监控状态变化、连续记录提醒等
+
+■ 开机自启（可选，P2）
+- 注册到 Windows 启动项（注册表或启动文件夹）
+- 提供开关选项
+
+【不做】
+- 不改动 scheduler.py（本系统没有排程逻辑，那个是PC助理的）
+- 不修改数据库表结构（已有用户数据，只读不删）
+- 不做粗粒度标注（上午/下午/晚上，留到后面）
+- 不做时间轴视图
+
+【技术要求】
+- 新增依赖：pywebview, plyer, pystray（或你推荐更轻量的替代）
+- 所有现有 Vue 前端代码保留，pywebview 只是换了个窗口容器
+- 数据库不迁移，已有 slices.db 数据完好
+- 保留 database.py 的 ATTACH 跨库逻辑
+- 所有新增代码加中文注释
+
+【目录结构】
+时间切片系统/
+├── app.py              ← Flask 应用
+├── database.py         ← 修复文件名 + 统一时间格式
+├── monitor.py          ← 后台窗口监控
+├── desktop.py          ← 新增：pywebview 窗口 + 系统托盘
+├── templates/
+│   └── index.html
+├── static/
+│   ├── js/app.js       ← 修复 Bug #1 #3 #5
+│   └── css/style.css   ← 热力图区分度相关样式
+├── start.bat           ← 改为启动 python desktop.py
+└── requirements.txt    ← 新增
+
+【请先回答】
+动手前告诉我：
+1. pywebview + pystray + plyer 的技术方案确认，或有更优替代？
+2. 系统托盘图标方案（内置生成 vs 准备 .ico 文件）
+3. 原生通知的具体触发点设计（哪些场景发通知）
+4. 修复 Bug #1 的具体代码方案（改 computed → data？还是加 setter？推荐理由）
+5. 热力图区分度的 UI 设计方案（小圆点标记 vs 双色/双热力图 vs 其他）
+
+确认后开始改代码。

@@ -1,0 +1,170 @@
+【背景】
+PC智能任务助理（二版）和时间切片系统（二版）已完成，均为独立Flask + Edge --app桌面应用。
+现在要将两个系统合并为一个统一的原生桌面应用，类似 Llama.cpp-Desktop.exe —— 单一exe，双击即用。
+
+当前代码位置：
+- First CC/PC智能任务助理/  (Flask :5000)
+- First CC/时间切片系统/    (Flask :5001)
+
+【目标架构】
+
+认知增强系统/
+├── desktop.py          ← 入口（PyInstaller打包目标）
+├── app.py              ← 统一Flask（只此一处定义路由）
+├── database.py         ← 统一数据库连接管理
+├── monitor.py          ← 窗口监控（从切片系统迁入）
+├── scheduler.py        ← 任务排程（从PC助理迁入）
+├── data/               ← 数据库目录（用户数据，不入exe）
+│   ├── task_assistant.db
+│   └── slices.db
+├── logs/               ← 日志目录（自动清理）
+├── templates/
+│   └── index.html      ← 统一界面：左侧边栏 + 右侧内容区
+├── static/
+│   ├── js/
+│   │   ├── app.js      ← Vue 3主应用 + 侧边栏导航
+│   │   ├── tasks.js    ← PC助理模块（从原app.js拆出）
+│   │   └── slices.js   ← 切片系统模块（从原app.js拆出）
+│   ├── css/
+│   │   └── style.css
+│   └── icon.ico        ← 应用图标
+├── start.bat
+├── requirements.txt
+└── build.spec          ← PyInstaller配置（本次先准备，打包后续再做）
+
+旧目录保留不动（PC智能任务助理/ 和 时间切片系统/），作为参考和备份。
+
+────────────────────────────
+第一阶段：Flask 合并（解决P0路由重复）
+────────────────────────────
+
+1. 新建 app.py —— 统一Flask应用
+   - 所有路由在此定义，用 url_prefix 区分：
+     /api/tasks/*    → PC助理API（任务CRUD、时段CRUD、排程、分配）
+     /api/slices/*   → 切片API（切片CRUD、设备日志查询、热力图数据、关联任务列表）
+     /api/system/*   → 系统API（通知设置、数据导出、日志清理）
+     /               → 主页面 (index.html)
+   - 从原 app.py（PC助理）和原 app.py（切片）各提取路由，不复写、不重复
+   - 数据库文件路径：data/task_assistant.db 和 data/slices.db
+   - 端口：5000（统一）
+
+2. 新建 database.py —— 统一连接管理器
+   - 管理两个独立的 SQLite 连接
+   - 跨库查询：slices 侧需要读 tasks 时，ATTACH data/task_assistant.db
+   - 路径使用相对路径：os.path.join(os.path.dirname(__file__), 'data', 'xxx.db')
+   - 保留原有所有 CRUD 函数，按模块分段注释
+   - WAL 模式两个库都开启
+
+3. 改造 desktop.py
+   - 导入 app.py 的 Flask 实例（from app import app），不在 desktop.py 内定义路由
+   - Flask 在后台线程启动
+   - Edge --app 模式打开 http://127.0.0.1:5000
+   - 系统托盘：显示/退出 + 首次关闭提示气泡
+   - 日志写入 logs/ 目录，超过7天自动清理
+   - 退出时停止 monitor 线程 + Flask 线程
+
+────────────────────────────
+第二阶段：前端统一（侧边栏导航）
+────────────────────────────
+
+4. 新建 index.html —— 统一界面
+   布局：
+   ┌──────────┬──────────────────────────┐
+   │ 侧边栏    │                          │
+   │          │       内容区              │
+   │ 📋 任务  │   （根据选中标签动态渲染） │
+   │ ⏱️ 切片  │                          │
+   │ ⚙️ 设置  │                          │
+   │          │                          │
+   └──────────┴──────────────────────────┘
+
+   - 侧边栏：固定宽度约60-80px（图标+文字），深色背景，高亮当前标签
+   - 任务标签加载原PC助理的界面
+   - 切片标签加载原切片系统的界面
+   - 设置标签：通知偏好、数据导出、日志清理
+   - Vue 3 CDN，用 v-if / v-show 按标签切换显示
+
+5. 拆分 app.js
+   - app.js：Vue 主应用（createApp），管理 currentTab 切换，挂载全局方法
+   - tasks.js：PC助理模块的 data/methods（从原 PC助理/app.js 完整迁移）
+   - slices.js：切片模块的 data/methods（从原 切片/app.js 完整迁移）
+   - HTML 中按顺序加载：tasks.js → slices.js → app.js
+   - app.js 使用 mixin 或 Object.assign 合并两个模块的 data/methods
+
+────────────────────────────
+第三阶段：全部修复清单
+────────────────────────────
+
+【从切片系统】
+6. 日志自动清理
+   - logs/ 目录下 .log 文件，保留最近7天
+   - desktop.py 启动时自动清理，或在设置页手动清理
+
+7. 首次关闭托盘提示
+   - 首次关闭窗口时，托盘弹出气泡：「认知增强系统仍在后台运行」
+   - 用 plyer 或 pystray 的 notification 方法
+   - 设置中可以关掉这个提示
+
+8. 整点通知时机修复
+   - 当前：启动后立即发通知说「现在是XX:00」
+   - 修复：启动后等下一个整点再开始发，不补发已过去的整点
+
+9. 切片编辑（原P2）
+   - 每条手动切片加编辑按钮
+   - 弹窗预填所有字段，PUT API，database 加 update_slice()
+   - 编辑后自动刷新列表
+
+10. 数据导出（原P2）
+    - 设置页：导出切片数据（JSON / CSV 可选）
+    - GET /api/system/export?format=json|csv&type=slices|tasks
+    - JSON：完整字段，UTF-8
+    - CSV：扁平化（情绪标签展开为逗号分隔）
+    - 浏览器触发下载
+
+11. 粗粒度标注（原P2）
+    - 切片页顶部新增「快速标注」区
+    - 三个按钮：☀️ 上午 / 🌤️ 下午 / 🌙 晚上
+    - 点击后弹出简化表单：活动描述 + 精力 + 情绪（不需要任务关联和时间戳，自动填当天+时段）
+    - 存入 slices 表，granularity 字段标记 'coarse'
+    - 切片列表中粗粒度条目有视觉区分（如左边框加粗或不同底色）
+
+12. 设备日志清理策略
+    - device_usage_logs 表保留最近30天
+    - 每周自动清理一次（monitor.py 或 database.py 中加清理函数）
+    - 设置页显示日志条数 + 手动清理按钮
+
+【从PC助理】
+13. 编辑弹窗 alert 改内联提示
+    - tasks.js 中编辑已排程任务时，不用 alert()
+    - 改为弹窗内黄色提示条（和切片编辑保持一致）
+
+────────────────────────────
+第四阶段：打包准备（本次先做配置，暂不打包）
+────────────────────────────
+
+14. 准备 PyInstaller 配置
+    - 新建 build.spec 或 pyinstaller 命令行参数整理
+    - datas：templates/ 和 static/ 目录
+    - hidden-imports：flask, plyer, pystray, psutil, pywin32
+    - 注意：data/ 和 logs/ 不打包进 exe（运行时在 exe 旁创建）
+    - 提供打包命令：pyinstaller --onedir --windowed --icon=static/icon.ico desktop.py
+
+15. 应用图标
+    - 准备 static/icon.ico（可用 PIL 生成一个临时版本，注释说明后续可替换）
+
+────────────────────────────
+【技术要求】
+- 所有现有功能不能丢（任务CRUD、排程、拖拽、弹出窗口模式、窗口监控、热力图、跨库查询等）
+- 用户已有数据库数据不可丢失（task_assistant.db 和 slices.db 直接复制到 data/ 目录，表结构不变）
+- 所有新增代码加中文注释
+- 保持 Vue 3 CDN，不引入构建工具
+
+【请先回答】
+在动手之前告诉我：
+1. 拆分 app.js 为三个文件的具体方案（Vue mixin？Object.assign？provide/inject？推荐哪种为什么？）
+2. 数据库迁移方案：如何处理用户现有数据？（建议：先让用户手动复制两个db到data/目录，但代码兼容两种路径）
+3. 粗粒度标注的数据库设计（slices表加granularity字段 vs 单独建表？）
+4. 日志清理和数据库清理的具体触发时机
+5. 你推荐的实施顺序（建议分阶段，每个阶段出一个可运行的版本）
+
+确认后开始写代码。先做第一阶段，确认可运行后再做第二阶段，以此类推。
