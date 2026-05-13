@@ -10,7 +10,6 @@ import sys
 import time
 import threading
 import ctypes
-import ctypes.wintypes
 from datetime import datetime
 
 # ═══════════════════════════════════════════════════════════
@@ -266,8 +265,8 @@ class Observer:
         if not page_title:
             return None
         # 去重：同标题 5 分钟内不重复
-        last_ts = self._last_url_events.get(page_title, 0)
-        if (now - last_ts).total_seconds() < 300:
+        last_ts = self._last_url_events.get(page_title)
+        if last_ts is not None and (now - last_ts).total_seconds() < 300:
             return None
         self._last_url_events[page_title] = now
         # 清理旧条目（> 1 小时的移除）
@@ -337,6 +336,29 @@ def clipboard_poller(buffer, lock, interval=2.0):
         except Exception:
             pass
         time.sleep(interval)
+
+# ═══════════════════════════════════════════════════════════
+# IDE 自动切换检测（Fix 3）
+# ═══════════════════════════════════════════════════════════
+
+IDE_KEYWORDS = [
+    "Cursor", "VS Code", "Visual Studio Code", "PyCharm",
+    "IntelliJ IDEA", "Android Studio", "Eclipse", "Sublime Text",
+    "Vim", "Neovim", "JetBrains",
+]
+
+
+def _is_ide_window(process_name, window_title):
+    """检测窗口是否为 IDE"""
+    combined = f"{process_name} {window_title}".lower()
+    for kw in IDE_KEYWORDS:
+        if kw.lower() in combined:
+            return True
+    # 特殊：devenv.exe (Visual Studio)
+    if process_name.lower() == "devenv.exe":
+        return True
+    return False
+
 
 # ═══════════════════════════════════════════════════════════
 # 格式化输出
@@ -415,12 +437,13 @@ def _print_thinker_result(r):
 # 主循环
 # ═══════════════════════════════════════════════════════════
 
-def run_agent(status_cb=None, thinker=None):
+def run_agent(status_cb=None, thinker=None, mode_cb=None):
     """启动 Agent 主循环（可被 agent_ui.py 以线程调用）。
 
     参数:
         status_cb:  可选回调，签名为 (color, breath, text, persona)
         thinker:    可选外部 Thinker 实例（共享给聊天窗使用）
+        mode_cb:    可选回调，签名为 (mode)，用于 IDE 自动切换模式
     """
     # 确保管道输出不缓冲、编码正确
     try:
@@ -500,6 +523,12 @@ def run_agent(status_cb=None, thinker=None):
     last_speak_time = 0           # 上次说话时间戳，用于冷却期
     SPEAK_COOLDOWN = 10 * 60      # 发言冷却期：10 分钟
     MIN_WINDOW_DURATION = 2 * 60  # 窗口最短持续时间：2 分钟
+
+    # IDE 自动切换（Fix 3）
+    ide_since = None      # 首次检测到 IDE 的时间戳
+    ide_sleep_sent = False  # 是否已发送过 sleep 指令
+    IDE_THRESHOLD = 5 * 60  # IDE 连续 5 分钟后自动休眠
+
     print("[启动] 主循环，等待事件...\n")
 
     try:
@@ -540,6 +569,23 @@ def run_agent(status_cb=None, thinker=None):
                 print(format_context(ctx))
                 if ev["type"] == "window_switch":
                     print(f"  切换: {ev['from']}  →  {ev['to']}")
+                    # ── IDE 自动切换检测（Fix 3）──
+                    to_key = ev["to"]
+                    parts = to_key.split("|", 1)
+                    to_proc = parts[0] if parts else ""
+                    to_title = parts[1] if len(parts) > 1 else ""
+                    if _is_ide_window(to_proc, to_title):
+                        if ide_since is None:
+                            ide_since = time.time()
+                            ide_sleep_sent = False
+                            print(f"  [IDE] 检测到 IDE 窗口，开始计时（{IDE_THRESHOLD // 60} 分钟后自动休眠）")
+                    else:
+                        if ide_since is not None:
+                            if mode_cb:
+                                mode_cb("accompany")
+                            print("  [IDE] 离开 IDE → 自动恢复陪伴态")
+                            ide_since = None
+                            ide_sleep_sent = False
                 elif ev["type"] == "period_change":
                     frm = PERIOD_LABELS.get(ev["from"], ev["from"])
                     to = PERIOD_LABELS.get(ev["to"], ev["to"])
@@ -564,8 +610,8 @@ def run_agent(status_cb=None, thinker=None):
 
                 # ── Thinker + Actor 管道 ──
                 if thinker and not skip_reason and not batch_in_cooldown and not batch_spoke:
-                    if ctx["time"]["is_night"]:
-                        print("  [Agent] SILENT | L0 | 深夜强制静默\n")
+                    if 0 <= datetime.now().hour < 6:
+                        print("  [Agent] SILENT | L0 | 凌晨静默（0-6时）\n")
                     else:
                         try:
                             persona = route_persona(ev["type"], ctx)
@@ -595,6 +641,14 @@ def run_agent(status_cb=None, thinker=None):
                 elif skip_reason:
                     print(f"  [过滤] {skip_reason}\n")
 
+            # ── IDE 自动休眠阈值检查（Fix 3）──
+            if ide_since is not None and not ide_sleep_sent \
+                    and (time.time() - ide_since) >= IDE_THRESHOLD:
+                if mode_cb:
+                    mode_cb("sleep")
+                print("  [IDE] 连续使用 IDE 超 5 分钟 → 自动休眠\n")
+                ide_sleep_sent = True
+
             # 5 分钟兜底心跳
             if time.time() - last_event_time >= 300:
                 ctx = observer.get_context()
@@ -611,8 +665,8 @@ def run_agent(status_cb=None, thinker=None):
                     enrich_context(ctx)
 
                 if thinker:
-                    if ctx["time"]["is_night"]:
-                        print("  [Agent] SILENT | L0 | 深夜强制静默")
+                    if 0 <= datetime.now().hour < 6:
+                        print("  [Agent] SILENT | L0 | 凌晨静默（0-6时）")
                     elif time.time() - last_speak_time < SPEAK_COOLDOWN:
                         remaining = int(SPEAK_COOLDOWN - (time.time() - last_speak_time))
                         print(f"  [冷却] 距上次发言 {remaining // 60} 分 {remaining % 60} 秒，"

@@ -24,7 +24,56 @@ from PyQt5.QtGui import (
     QPainter, QColor, QBrush, QPen, QFont, QPixmap, QIcon,
 )
 
-import requests
+import os
+import atexit
+import urllib.request
+
+# ── 单例锁：防止重复启动 ──
+_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".agent_ui.lock")
+
+
+def _acquire_single_instance():
+    """获取单例锁。已有实例运行时返回 False。注册退出时自动释放。"""
+    try:
+        if os.path.exists(_LOCK_FILE):
+            with open(_LOCK_FILE, "r") as f:
+                old_pid = f.read().strip()
+            # 检查旧进程是否还活着
+            try:
+                import ctypes
+                PROCESS_TERMINATE = 1
+                h = ctypes.windll.kernel32.OpenProcess(PROCESS_TERMINATE, False, int(old_pid))
+                if h:
+                    ctypes.windll.kernel32.CloseHandle(h)
+                    print(f"[UI] Agent 已在运行中（PID {old_pid}），退出。")
+                    return False
+            except Exception:
+                pass  # 旧 PID 无效，覆盖
+        with open(_LOCK_FILE, "w") as f:
+            f.write(str(os.getpid()))
+        atexit.register(_release_single_instance)
+        return True
+    except Exception:
+        return True  # 锁文件不可写时不阻止启动
+
+
+def _release_single_instance():
+    try:
+        if os.path.exists(_LOCK_FILE):
+            os.remove(_LOCK_FILE)
+    except Exception:
+        pass
+
+
+def _ping_url(url):
+    """快速检测 URL 是否可达"""
+    try:
+        req = urllib.request.Request(url, method='HEAD')
+        with urllib.request.urlopen(req, timeout=2) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
 
 # ═══════════════════════════════════════════════════════════
 # 共享状态
@@ -35,7 +84,10 @@ _state = {
     "breath": "slow",
     "text": "",
     "tooltip": "",
-    "mode": "accompany",  # sleep / accompany / dialog
+    "mode": "accompany",     # sleep / accompany / dialog
+    "auto_mode": True,       # Fix 3: 是否允许自动模式切换
+    "_mode_locked": False,   # Fix 3: 用户是否锁定模式
+    "pending_auto_mode": None,  # Fix 3: Agent 线程请求的模式切换
 }
 _state_lock = threading.Lock()
 _messages = []  # 消息历史，供聊天窗读取
@@ -55,6 +107,12 @@ def update_status(color=None, breath=None, text=None):
         if text:
             _state["text"] = text[:20]
             _state["tooltip"] = text
+
+
+def request_auto_mode(mode):
+    """Agent 线程调用，请求自动模式切换（仅当未被锁定时生效）"""
+    with _state_lock:
+        _state["pending_auto_mode"] = mode
 
 
 def add_message(persona, text):
@@ -481,18 +539,15 @@ class MainWindow(QWidget):
         layout.setAlignment(Qt.AlignCenter)
         layout.setSpacing(14)
 
-        # 服务状态
-        online = self._check_url(url)
-        status_color = "#4d4" if online else "#e44"
-        status_text = "服务在线" if online else "服务离线"
+        # 服务状态（初始显示检测中，100ms 后异步更新）
         status_row = QHBoxLayout()
         status_row.setAlignment(Qt.AlignCenter)
         dot = QLabel("●")
-        dot.setStyleSheet(f"color: {status_color}; font-size: 10px; border: none;")
+        dot.setStyleSheet("color: #888; font-size: 10px; border: none;")
         status_row.addWidget(dot)
-        lbl = QLabel(status_text)
-        lbl.setStyleSheet(f"color: {status_color}; font-size: 12px; border: none; margin-left: 4px;")
-        status_row.addWidget(lbl)
+        status_lbl = QLabel("检测中...")
+        status_lbl.setStyleSheet("color: #888; font-size: 12px; border: none; margin-left: 4px;")
+        status_row.addWidget(status_lbl)
         layout.addLayout(status_row)
 
         icon = QLabel(title.split(" ")[0])
@@ -520,20 +575,22 @@ class MainWindow(QWidget):
             QPushButton:disabled { background-color: #333; color: #666; }
         """)
         btn.setFixedWidth(120)
-        btn.setEnabled(online)
+        btn.setEnabled(False)  # 初始禁用，检测通过后启用
         btn.clicked.connect(lambda: webbrowser.open(url))
         layout.addWidget(btn, alignment=Qt.AlignCenter)
 
-        return w
+        # 异步检测服务状态
+        def check():
+            online = _ping_url(url)
+            c = "#4d4" if online else "#e44"
+            t = "服务在线" if online else "服务离线"
+            dot.setStyleSheet(f"color: {c}; font-size: 10px; border: none;")
+            status_lbl.setStyleSheet(f"color: {c}; font-size: 12px; border: none; margin-left: 4px;")
+            status_lbl.setText(t)
+            btn.setEnabled(online)
+        QTimer.singleShot(200, check)
 
-    @staticmethod
-    def _check_url(url):
-        """快速检测 Flask 服务是否在线"""
-        try:
-            r = requests.get(url, timeout=2)
-            return r.status_code == 200
-        except Exception:
-            return False
+        return w
 
     def closeEvent(self, event):
         """关闭窗口 = 缩回悬浮窗"""
@@ -573,26 +630,52 @@ class CompanionDot(QWidget):
         self.move(screen.width() - 140, screen.height() - 200)
 
         self._phase = 0.0
+        self._float_phase = 0.0    # 浮动动画独立相位
+        self._glow_phase = 0.0     # 光晕脉冲独立相位
         self._breath_speed = 0.04
+        self._target_breath_speed = 0.04  # 平滑过渡
         self._color = QColor("#4A9EFF")
         self._target_color = QColor("#4A9EFF")
         self._start_time = time.time()
-        self._uptime_text = ""
+        self._display_text = ""
         self._dragging = False
+        self._cx = self.WINDOW_SIZE / 2
+        self._cy = self.WINDOW_SIZE / 2
+        self._dot_r = self.DIAMETER / 2
+        self._glow_alpha = 25
+        self._cached_frame = None     # Pixmap 预渲染缓存
         self._drag_offset = QPoint()
         self._main_win = None  # 主窗口延迟创建
         self._thinker = None   # Thinker 实例引用
 
         self._timer = QTimer(self)
+        self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(33)
+        self._timer.start(16)  # 60 FPS
+
+        self._mode_locked = False   # Fix 3/5: 用户锁定当前模式
 
         self.show()
 
     # ── 模式管理 ──────────────────────────────────────────
 
-    def set_mode(self, mode):
-        """切换存在模式：sleep(休眠) / accompany(陪伴) / dialog(对话)"""
+    def set_mode(self, mode, auto=False):
+        """切换存在模式：sleep(休眠) / accompany(陪伴) / dialog(对话)
+
+        auto=True 表示由 Agent 自动触发（IDE 检测），受 mode_locked 约束。
+        auto=False 表示用户手动操作，会关闭自动模式并锁定。
+        """
+        # 自动切换时，如果用户锁定了模式，则不响应
+        if auto and self._mode_locked:
+            return
+
+        # 手动操作时关闭自动模式
+        if not auto:
+            with _state_lock:
+                _state["auto_mode"] = False
+                _state["_mode_locked"] = False  # 手动操作重置锁定状态
+                _state["pending_auto_mode"] = None
+
         with _state_lock:
             _state["mode"] = mode
 
@@ -623,55 +706,10 @@ class CompanionDot(QWidget):
     # ── 绘制 ──────────────────────────────────────────────
 
     def paintEvent(self, event):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
-        with _state_lock:
-            target_hex = _state["color"]
-            breath_type = _state["breath"]
-            text = _state["text"]
-
-        self._target_color = QColor(target_hex)
-        self._color = self._lerp_color(self._color, self._target_color, 0.12)
-        speeds = {"slow": 0.04, "normal": 0.07, "fast": 0.12}
-        self._breath_speed = speeds.get(breath_type, 0.06)
-        breath = math.sin(self._phase) * 4.5
-
-        cx = self.WINDOW_SIZE / 2
-        cy = self.WINDOW_SIZE / 2
-        dot_r = self.DIAMETER / 2 + breath
-
-        # 外层光晕
-        glow = QColor(self._color)
-        glow.setAlpha(25)
-        p.setBrush(QBrush(glow))
-        p.setPen(Qt.NoPen)
-        p.drawEllipse(QPoint(int(cx), int(cy)), int(dot_r + 8), int(dot_r + 8))
-
-        # 主体
-        p.setBrush(QBrush(self._color))
-        p.drawEllipse(QPoint(int(cx), int(cy)), int(dot_r), int(dot_r))
-
-        # 高光
-        highlight = QColor(255, 255, 255, 50)
-        p.setBrush(QBrush(highlight))
-        hl_x = cx - dot_r * 0.18
-        hl_y = cy - dot_r * 0.25
-        hl_r = dot_r * 0.4
-        p.drawEllipse(QPoint(int(hl_x), int(hl_y)), int(hl_r), int(hl_r))
-        highlight2 = QColor(255, 255, 255, 70)
-        p.setBrush(QBrush(highlight2))
-        p.drawEllipse(QPoint(int(hl_x - hl_r * 0.4), int(hl_y - hl_r * 0.3)),
-                       int(hl_r * 0.45), int(hl_r * 0.45))
-
-        # 文字
-        display_text = text if text else self._uptime_text
-        if display_text and self.get_mode() != "sleep":
-            p.setPen(QColor(255, 255, 255, 160))
-            p.setFont(QFont("Microsoft YaHei", 8))
-            p.drawText(self.rect().adjusted(0, int(dot_r + 18), 0, 0),
-                        Qt.AlignHCenter | Qt.AlignTop, display_text)
-        p.end()
+        if self._cached_frame and not self._cached_frame.isNull():
+            p = QPainter(self)
+            p.drawPixmap(0, 0, self._cached_frame)
+            p.end()
 
     def _lerp_color(self, c1, c2, t):
         r = int(c1.red() + (c2.red() - c1.red()) * t)
@@ -680,9 +718,94 @@ class CompanionDot(QWidget):
         return QColor(r, g, b)
 
     def _tick(self):
+        # ── 读取共享状态 ──
+        with _state_lock:
+            target_hex = _state["color"]
+            breath_type = _state["breath"]
+            text = _state["text"]
+        self._target_color = QColor(target_hex)
+
+        # ── 动画参数更新 ──
+        self._color = self._lerp_color(self._color, self._target_color, 0.065)
+        target_speed = {"slow": 0.017, "normal": 0.03, "fast": 0.055}.get(breath_type, 0.025)
+        self._target_breath_speed += (target_speed - self._target_breath_speed) * 0.065
+        self._breath_speed = self._target_breath_speed
+
         self._phase += self._breath_speed
+        self._glow_phase += 0.027
+
+        s = math.sin(self._phase)
+        s2 = math.sin(self._phase * 2.17)
+        breath = s * 3.8 + s2 * 1.0
+        cx = self.WINDOW_SIZE / 2
+        cy = self.WINDOW_SIZE / 2
+        dot_r = self.DIAMETER / 2 + breath
+        glow_pulse = math.sin(self._glow_phase) * 0.35 + 0.75
+        glow_alpha = max(10, min(40, int(25 * glow_pulse)))
+
+        # ── Pixmap 预渲染：所有绘制在此完成，paintEvent 只做一次 blit ──
+        color = self._color
+        glow_r = dot_r + 6
+        pix = QPixmap(self.WINDOW_SIZE, self.WINDOW_SIZE)
+        pix.fill(Qt.transparent)
+        pp = QPainter(pix)
+        pp.setRenderHint(QPainter.Antialiasing)
+
+        # 光晕
+        glow = QColor(color)
+        glow.setAlpha(glow_alpha)
+        pp.setBrush(QBrush(glow))
+        pp.setPen(Qt.NoPen)
+        pp.drawEllipse(QPoint(int(cx), int(cy)), int(glow_r), int(glow_r))
+        # 中层柔光
+        mid_glow = QColor(color)
+        mid_glow.setAlpha(int(glow_alpha * 1.6))
+        pp.setBrush(QBrush(mid_glow))
+        pp.drawEllipse(QPoint(int(cx), int(cy)), int(dot_r + 3), int(dot_r + 3))
+        # 主体
+        pp.setBrush(QBrush(color))
+        pp.drawEllipse(QPoint(int(cx), int(cy)), int(dot_r), int(dot_r))
+        # 高光
+        hl = QColor(255, 255, 255, 50)
+        pp.setBrush(QBrush(hl))
+        hl_x = cx - dot_r * 0.18
+        hl_y = cy - dot_r * 0.25
+        hl_r = dot_r * 0.4
+        pp.drawEllipse(QPoint(int(hl_x), int(hl_y)), int(hl_r), int(hl_r))
+        # 次高光
+        hl2 = QColor(255, 255, 255, 70)
+        pp.setBrush(QBrush(hl2))
+        pp.drawEllipse(QPoint(int(hl_x - hl_r * 0.4), int(hl_y - hl_r * 0.3)),
+                       int(hl_r * 0.45), int(hl_r * 0.45))
+
+        # 文字（自动截断防溢出）
         elapsed = int((time.time() - self._start_time) / 60)
-        self._uptime_text = f"已陪伴 {elapsed} 分钟" if elapsed >= 1 else "刚刚苏醒..."
+        display_text = text if text else (
+            f"已陪伴 {elapsed} 分钟" if elapsed >= 1 else "刚刚苏醒..."
+        )
+        if display_text and self.get_mode() != "sleep":
+            font = QFont("Microsoft YaHei", 8)
+            pp.setFont(font)
+            # 文本区域：球下方留 4px 左右边距
+            text_rect = pix.rect().adjusted(6, int(dot_r + 18), -6, -2)
+            fm = pp.fontMetrics()
+            # 超长则省略号截断
+            if fm.horizontalAdvance(display_text) > text_rect.width():
+                display_text = fm.elidedText(display_text, Qt.ElideRight, text_rect.width())
+            pp.setPen(QColor(255, 255, 255, 160))
+            pp.drawText(text_rect, Qt.AlignHCenter | Qt.AlignTop, display_text)
+        pp.end()
+
+        self._cached_frame = pix
+
+        # ── Fix 3: 自动模式切换 ──
+        with _state_lock:
+            pending = _state.get("pending_auto_mode")
+        if pending and not self._mode_locked:
+            self.set_mode(pending, auto=True)
+            with _state_lock:
+                _state["pending_auto_mode"] = None
+
         self.update()
 
     # ── 拖拽 ──────────────────────────────────────────────
@@ -698,6 +821,40 @@ class CompanionDot(QWidget):
 
     def mouseReleaseEvent(self, event):
         self._dragging = False
+
+    # ── Fix 5: 右键菜单 ──────────────────────────────────
+
+    def contextMenuEvent(self, event):
+        menu = QMenu()
+
+        mode_menu = menu.addMenu("切换模式")
+        sleep_action = mode_menu.addAction("💤 休眠态")
+        companion_action = mode_menu.addAction("🌙 陪伴态")
+        chat_action = mode_menu.addAction("💬 对话态")
+
+        menu.addSeparator()
+        lock_text = "🔒 锁定当前模式" if not self._mode_locked else "🔓 解锁模式"
+        lock_action = menu.addAction(lock_text)
+        menu.addSeparator()
+        exit_action = menu.addAction("❌ 退出")
+
+        action = menu.exec_(event.globalPos())
+
+        if action == sleep_action:
+            self.set_mode("sleep")
+        elif action == companion_action:
+            self.set_mode("accompany")
+        elif action == chat_action:
+            self.set_mode("dialog")
+        elif action == lock_action:
+            self._mode_locked = not self._mode_locked
+        elif action == exit_action:
+            self.hide()
+            if self._main_win:
+                self._main_win.close()
+            if hasattr(self, '_tray') and self._tray:
+                self._tray.hide()
+            QApplication.quit()
 
     # ── 交互 ──────────────────────────────────────────────
 
@@ -823,10 +980,12 @@ def _start_agent(dot):
         if text:
             add_message(persona, text)
 
-    run_agent(status_cb=status_cb, thinker=thinker)
+    run_agent(status_cb=status_cb, thinker=thinker, mode_cb=request_auto_mode)
 
 
 def main():
+    if not _acquire_single_instance():
+        sys.exit(0)
     print("[UI] 启动悬浮窗 + 托盘...")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)

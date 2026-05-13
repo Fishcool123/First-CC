@@ -1,25 +1,37 @@
 # -*- coding: utf-8 -*-
 """
-agent_memory.py — 只读连接 v2 SQLite，提供回溯上下文给 Thinker
+agent_memory.py — 只读连接本地 SQLite，提供回溯上下文给 Thinker
 Phase 3: 今日切片数 / 上次记录时间 / 最近设备活动摘要
 
-依赖: sqlite3（标准库）
+依赖: sqlite3（标准库）, database.py（本地）
 """
 import os
+import urllib.parse
 import sqlite3
 from datetime import datetime, timedelta
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-V2_DATA = os.path.normpath(os.path.join(BASE_DIR, "..", "认知增强系统", "data"))
+from database import SLICES_DB as _SLICES_PATH, TASKS_DB as _TASKS_PATH
 
-SLICES_DB = os.path.join(V2_DATA, "slices.db")
-TASKS_DB = os.path.join(V2_DATA, "task_assistant.db")
+# 转为字符串供 sqlite3 使用
+SLICES_DB = str(_SLICES_PATH)
+TASKS_DB = str(_TASKS_PATH)
 
 
 def _ro_connect(db_path):
     """WAL 兼容的只读连接"""
-    uri = f"file:{db_path}?mode=ro"
+    abs_path = os.path.abspath(str(db_path))
+    uri = "file:{}?mode=ro".format(urllib.parse.quote(abs_path, safe='/:\\'))
     return sqlite3.connect(uri, uri=True)
+
+
+def _connect_slices_db():
+    """连接 slices.db（只读）"""
+    return _ro_connect(SLICES_DB)
+
+
+def _connect_task_db():
+    """连接 task_assistant.db（只读）"""
+    return _ro_connect(TASKS_DB)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -69,6 +81,37 @@ def get_time_since_last_record():
         return int(delta.total_seconds() / 60)
     except Exception:
         return -1
+
+
+def get_today_mood_summary():
+    """查询 slices.db 的 slices 表，统计今日 mood_tags。
+    返回格式：'记录3次：焦虑、平静、开心'
+    无记录时返回：'今日暂无情绪记录'
+    """
+    conn = _connect_slices_db()
+    if not conn:
+        return "（数据库不可用）"
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        cursor = conn.execute(
+            "SELECT mood_tags FROM slices WHERE date(timestamp) = ? "
+            "AND mood_tags IS NOT NULL AND mood_tags != ''",
+            (today,)
+        )
+        rows = cursor.fetchall()
+        if not rows:
+            return "今日暂无情绪记录"
+        tags = []
+        for row in rows:
+            tags.extend([t.strip() for t in row[0].split(",") if t.strip()])
+        summary = f"记录{len(tags)}次：{'、'.join(tags[:10])}"
+        if len(tags) > 10:
+            summary += f"等{len(tags)}个标签"
+        return summary
+    except Exception as e:
+        return f"（查询情绪数据失败：{e}）"
+    finally:
+        conn.close()
 
 
 # ═══════════════════════════════════════════════════════════
@@ -176,6 +219,34 @@ def get_free_slots_today():
         return "?"
 
 
+def get_pending_tasks():
+    """读取 task_assistant.db 的 tasks 表，返回待办任务列表。
+    返回格式：[{"title": "写论文", "deadline": "2025-03-15", "priority": "高"}, ...]
+    无任务时返回空列表。
+    """
+    conn = _connect_task_db()
+    if not conn:
+        return []
+    try:
+        cursor = conn.execute(
+            "SELECT title, deadline, priority FROM tasks "
+            "WHERE status = 'pending' ORDER BY priority DESC, deadline ASC LIMIT 10"
+        )
+        rows = cursor.fetchall()
+        tasks = []
+        for row in rows:
+            tasks.append({
+                "title": row[0] or "（无标题）",
+                "deadline": row[1] or "无截止日期",
+                "priority": row[2] or "普通"
+            })
+        return tasks
+    except Exception as e:
+        return []
+    finally:
+        conn.close()
+
+
 # ═══════════════════════════════════════════════════════════
 # 上下文增强（供 agent_loop.py 调用）
 # ═══════════════════════════════════════════════════════════
@@ -207,6 +278,8 @@ def enrich_context(ctx):
     ctx["upcoming_deadlines"] = get_upcoming_deadlines()
     ctx["free_slots_today"] = get_free_slots_today()
     ctx["today_completed_count"] = 0  # v2 无完成追踪，预留
+    ctx["today_mood_summary"] = get_today_mood_summary()
+    ctx["pending_tasks"] = get_pending_tasks()
     return ctx
 
 
