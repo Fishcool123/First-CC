@@ -1,6 +1,6 @@
 # Agent Loop 原型 — 构建计划
 
-> 状态：待 Claude Code 执行 | 原则：每步可独立验证，不做无用功
+> 状态：✅ 全部完成 | 当前状态详见 STATUS.md
 
 ---
 
@@ -143,23 +143,40 @@
 
 ---
 
-## 文件清单（Claude Code 需创建）
+## 文件清单（已完成）
 
 ```
 agent_proto/
-├── DESIGN.md                         ✅ 已存在（本设计文档）
-├── BUILD_PLAN.md                     ✅ 本文件
+├── DESIGN.md                         ✅
+├── BUILD_PLAN.md                     ✅
+├── STATUS.md                         ✅ 当前状态快照（2026-05-14）
 ├── agent_personas/
-│   ├── recorder.md                   ✅ 已存在
-│   ├── companion.md                  ✅ 已存在（骨架）
-│   └── scheduler.md                  ✅ 已存在（骨架）
+│   ├── recorder.md                   ✅
+│   ├── companion.md                  ✅
+│   └── scheduler.md                  ✅
 │
-├── agent_loop.py                     ❌ 待创建 — 主循环
-├── agent_thinker.py                  ❌ 待创建 — LLM推理引擎
-├── agent_memory.py                   ❌ 待创建 — v2数据只读
-├── agent_actor.py                    ❌ 待创建 — 行动执行器
-├── llm_config.yaml                   ❌ 待创建 — LLM配置
-└── proto_log.md                      ❌ 待创建 — 运行日志（空文件）
+├── agent_loop.py                     ✅
+├── agent_thinker.py                  ✅
+├── agent_memory.py                   ✅
+├── agent_actor.py                    ✅
+├── agent_bridge.py                   ✅
+├── agent_cloud.py                    ✅
+├── agent_health.py                   ✅
+├── agent_ui.py                       ✅
+├── database.py                       ✅
+├── llm_config.yaml                   ✅
+├── proto_log.md                      ✅
+├── cherry_style_light.qss            ✅
+├── requirements.txt                  ✅
+│
+└── widgets/                          ✅ 全部实现
+    ├── time_slice_tab.py             ✅
+    ├── emotional_tab.py              ✅
+    ├── task_tab.py                   ✅
+    ├── terminal_panel.py             ✅
+    ├── data_panel.py                 ✅
+    ├── gantt_chart.py                ✅
+    └── heatmap.py                    ✅
 ```
 
 ---
