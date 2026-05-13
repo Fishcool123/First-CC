@@ -1,0 +1,298 @@
+/* ============================================
+   Cherry Studio 风格 - 认知增强系统
+   ============================================ */
+
+/* 全局基础 */
+QWidget {
+    background-color: #1a1a1a;
+    color: #e0e0e0;
+    font-family: "Microsoft YaHei UI", "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 14px;
+}
+
+QMainWindow {
+    background-color: #1a1a1a;
+}
+
+/* Tab 标签栏 */
+QTabWidget::pane {
+    border: none;
+    background-color: #1a1a1a;
+    top: -1px;
+}
+
+QTabBar {
+    background-color: #252525;
+    border-bottom: 1px solid #333333;
+}
+
+QTabBar::tab {
+    background-color: transparent;
+    color: #888888;
+    padding: 10px 20px;
+    margin-right: 2px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+QTabBar::tab:hover {
+    color: #cccccc;
+    background-color: #2d2d2d;
+}
+
+QTabBar::tab:selected {
+    color: #ffffff;
+    border-bottom: 2px solid #5A9EBF;
+    background-color: #1a1a1a;
+}
+
+/* 按钮 */
+QPushButton {
+    background-color: #2d2d2d;
+    color: #e0e0e0;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-size: 14px;
+    min-height: 32px;
+}
+
+QPushButton:hover {
+    background-color: #3d3d3d;
+    border-color: #4d4d4d;
+}
+
+QPushButton:pressed {
+    background-color: #252525;
+}
+
+QPushButton#primaryBtn {
+    background-color: #5A9EBF;
+    color: #ffffff;
+    border: 1px solid #5A9EBF;
+    font-weight: 500;
+}
+
+QPushButton#primaryBtn:hover {
+    background-color: #6bb0d1;
+    border-color: #6bb0d1;
+}
+
+QPushButton#primaryBtn:pressed {
+    background-color: #4a8eaf;
+}
+
+QPushButton#dangerBtn {
+    background-color: #c0392b;
+    color: #ffffff;
+    border: 1px solid #c0392b;
+}
+
+QPushButton#dangerBtn:hover {
+    background-color: #d44637;
+}
+
+/* 表格 */
+QTableView {
+    background-color: #252525;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    gridline-color: #333333;
+    selection-background-color: #3d4f5f;
+    selection-color: #ffffff;
+}
+
+QTableView::item {
+    padding: 8px 12px;
+    border-bottom: 1px solid #2d2d2d;
+}
+
+QTableView::item:hover {
+    background-color: #2d2d2d;
+}
+
+QTableView::item:selected {
+    background-color: #3d4f5f;
+    color: #ffffff;
+}
+
+QHeaderView::section {
+    background-color: #2d2d2d;
+    color: #888888;
+    padding: 10px 12px;
+    border: none;
+    border-bottom: 1px solid #333333;
+    font-weight: 600;
+    font-size: 12px;
+}
+
+/* 滚动条 */
+QScrollBar:vertical {
+    background-color: #1a1a1a;
+    width: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #3d3d3d;
+    border-radius: 4px;
+    min-height: 30px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #4d4d4d;
+}
+
+QScrollBar::add-line:vertical,
+QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+QScrollBar:horizontal {
+    background-color: #1a1a1a;
+    height: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal {
+    background-color: #3d3d3d;
+    border-radius: 4px;
+    min-width: 30px;
+}
+
+/* 输入框 */
+QLineEdit, QTextEdit {
+    background-color: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #e0e0e0;
+    selection-background-color: #5A9EBF;
+}
+
+QLineEdit:focus, QTextEdit:focus {
+    border-color: #5A9EBF;
+    background-color: #2d2d2d;
+}
+
+QLineEdit::placeholder {
+    color: #666666;
+}
+
+/* 下拉框 */
+QComboBox {
+    background-color: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    padding: 6px 12px;
+    color: #e0e0e0;
+}
+
+QComboBox:hover {
+    border-color: #4d4d4d;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 24px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    selection-background-color: #3d4f5f;
+    selection-color: #ffffff;
+}
+
+/* 终端日志面板 */
+QPlainTextEdit#terminalLog {
+    background-color: #0d0d0d;
+    color: #00ff00;
+    font-family: "Cascadia Code", "Consolas", "Courier New", monospace;
+    font-size: 12px;
+    border: none;
+    border-radius: 0;
+    padding: 8px;
+}
+
+/* 状态栏 */
+QStatusBar {
+    background-color: #252525;
+    border-top: 1px solid #333333;
+    color: #888888;
+    font-size: 12px;
+}
+
+/* 标签 */
+QLabel {
+    color: #e0e0e0;
+}
+
+QLabel#titleLabel {
+    font-size: 16px;
+    font-weight: 600;
+    color: #ffffff;
+}
+
+QLabel#subtitleLabel {
+    font-size: 12px;
+    color: #888888;
+}
+
+/* 卡片容器 */
+QFrame#cardFrame {
+    background-color: #252525;
+    border: 1px solid #333333;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+/* 分隔线 */
+QFrame#separator {
+    background-color: #333333;
+    max-height: 1px;
+}
+
+/* 搜索框 */
+QLineEdit#searchBox {
+    background-color: #252525;
+    border: 1px solid #3d3d3d;
+    border-radius: 20px;
+    padding: 8px 16px;
+    color: #e0e0e0;
+}
+
+QLineEdit#searchBox:focus {
+    border-color: #5A9EBF;
+    background-color: #2d2d2d;
+}
+
+/* 气泡消息（聊天窗） */
+QFrame#userBubble {
+    background-color: #3d4f5f;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin: 4px 0;
+}
+
+QFrame#agentBubble {
+    background-color: #2d2d2d;
+    border-radius: 12px;
+    padding: 10px 14px;
+    margin: 4px 0;
+}
+
+/* 优先级标签 */
+QLabel#priorityP1 { color: #e74c3c; font-weight: 600; }
+QLabel#priorityP2 { color: #f39c12; font-weight: 600; }
+QLabel#priorityP3 { color: #3498db; font-weight: 600; }
+QLabel#priorityP4 { color: #9b59b6; font-weight: 600; }
+QLabel#priorityP5 { color: #2ecc71; font-weight: 600; }
+
+/* 状态标签 */
+QLabel#statusCompleted { color: #2ecc71; }
+QLabel#statusPending { color: #f39c12; }
+QLabel#statusInProgress { color: #3498db; }

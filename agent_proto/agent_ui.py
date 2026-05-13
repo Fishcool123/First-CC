@@ -1,44 +1,43 @@
 # -*- coding: utf-8 -*-
 """
-agent_ui.py — 桌面悬浮窗 + 系统托盘 + 聊天窗（Phase 4A/B/C）
-PyQt5 实现的 AI 陪伴智能体 UI，三种形态自适应切换。
+agent_ui.py — 认知增强系统 PyQt5 桌面应用
+三 tab（时间切片 / 情感辅助 / 任务助理）+ 悬浮窗 + 托盘 + 终端日志
 
 入口：py agent_proto/agent_ui.py
-- 主线程：PyQt5 窗口 + 托盘图标
+- 主线程：PyQt5 MainWindow + CompanionDot + TrayManager
 - 后台线程：Agent 循环（Observer → Thinker → Actor）
 """
 import sys
 import math
 import threading
 import time
-import webbrowser
+import os
+import atexit
 from datetime import datetime
 
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QSystemTrayIcon, QMenu, QAction,
     QVBoxLayout, QHBoxLayout, QTextEdit, QPushButton, QLabel,
-    QScrollArea, QSizePolicy, QTabWidget,
+    QScrollArea, QSizePolicy, QTabWidget, QMainWindow, QDockWidget,
+    QStackedWidget, QFrame,
 )
 from PyQt5.QtCore import Qt, QTimer, QPoint
 from PyQt5.QtGui import (
-    QPainter, QColor, QBrush, QPen, QFont, QPixmap, QIcon,
+    QPainter, QColor, QBrush, QPen, QFont, QPixmap, QIcon, QFontMetrics,
+    QPainterPath,
 )
 
-import os
-import atexit
-import urllib.request
-
-# ── 单例锁：防止重复启动 ──
-_LOCK_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".agent_ui.lock")
+# ── 单例锁 ──
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_LOCK_FILE = os.path.join(BASE_DIR, ".agent_ui.lock")
 
 
 def _acquire_single_instance():
-    """获取单例锁。已有实例运行时返回 False。注册退出时自动释放。"""
+    """PID 文件单例锁，防止重复启动"""
     try:
         if os.path.exists(_LOCK_FILE):
             with open(_LOCK_FILE, "r") as f:
                 old_pid = f.read().strip()
-            # 检查旧进程是否还活着
             try:
                 import ctypes
                 PROCESS_TERMINATE = 1
@@ -48,13 +47,13 @@ def _acquire_single_instance():
                     print(f"[UI] Agent 已在运行中（PID {old_pid}），退出。")
                     return False
             except Exception:
-                pass  # 旧 PID 无效，覆盖
+                pass
         with open(_LOCK_FILE, "w") as f:
             f.write(str(os.getpid()))
         atexit.register(_release_single_instance)
         return True
     except Exception:
-        return True  # 锁文件不可写时不阻止启动
+        return True
 
 
 def _release_single_instance():
@@ -65,18 +64,8 @@ def _release_single_instance():
         pass
 
 
-def _ping_url(url):
-    """快速检测 URL 是否可达"""
-    try:
-        req = urllib.request.Request(url, method='HEAD')
-        with urllib.request.urlopen(req, timeout=2) as r:
-            return r.status == 200
-    except Exception:
-        return False
-
-
 # ═══════════════════════════════════════════════════════════
-# 共享状态
+# 共享状态（Agent 线程写，UI 线程读）
 # ═══════════════════════════════════════════════════════════
 
 _state = {
@@ -84,18 +73,18 @@ _state = {
     "breath": "slow",
     "text": "",
     "tooltip": "",
-    "mode": "accompany",     # sleep / accompany / dialog
-    "auto_mode": True,       # Fix 3: 是否允许自动模式切换
-    "_mode_locked": False,   # Fix 3: 用户是否锁定模式
-    "pending_auto_mode": None,  # Fix 3: Agent 线程请求的模式切换
+    "mode": "accompany",
+    "auto_mode": True,
+    "_mode_locked": False,
+    "pending_auto_mode": None,
 }
 _state_lock = threading.Lock()
-_messages = []  # 消息历史，供聊天窗读取
+_messages = []
 _messages_lock = threading.Lock()
 
 
 def update_status(color=None, breath=None, text=None):
-    """Agent 线程调用，更新悬浮窗状态"""
+    """更新悬浮窗状态（由 bridge 信号触发）"""
     with _state_lock:
         if color:
             _state["color"] = {
@@ -110,13 +99,13 @@ def update_status(color=None, breath=None, text=None):
 
 
 def request_auto_mode(mode):
-    """Agent 线程调用，请求自动模式切换（仅当未被锁定时生效）"""
+    """请求自动模式切换（由 bridge 信号触发）"""
     with _state_lock:
         _state["pending_auto_mode"] = mode
 
 
 def add_message(persona, text):
-    """Agent 线程调用，添加消息到聊天历史"""
+    """添加消息到聊天历史（由 bridge 信号触发）"""
     with _messages_lock:
         _messages.append({
             "time": datetime.now().strftime("%H:%M"),
@@ -128,51 +117,73 @@ def add_message(persona, text):
 
 
 # ═══════════════════════════════════════════════════════════
-# 托盘图标
+# 托盘图标绘制
 # ═══════════════════════════════════════════════════════════
 
 def _make_tray_icon(color_hex="#4A9EFF", size=16):
-    """绘制精致的托盘图标：环 + 实心内圈"""
+    """Lucide 风格托盘图标 — 六边形（神经节点）+ 中心高光"""
     pix = QPixmap(size, size)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
     cx, cy = size / 2, size / 2
     color = QColor(color_hex)
-    # 外环
-    p.setPen(QPen(color, 1.2))
+
+    pen = QPen(color, 1.1)
+    pen.setCapStyle(Qt.RoundCap)
+    pen.setJoinStyle(Qt.RoundJoin)
+    p.setPen(pen)
     p.setBrush(Qt.NoBrush)
-    p.drawEllipse(QPoint(int(cx), int(cy)), int(cx - 1.5), int(cy - 1.5))
-    # 内实心点
+
+    # 六边形外框（Lucide Hexagon 风格）
+    r = 5.8
+    path = QPainterPath()
+    for i in range(6):
+        angle = math.pi / 6 + i * math.pi / 3
+        x = cx + r * math.cos(angle)
+        y = cy + r * math.sin(angle)
+        if i == 0:
+            path.moveTo(x, y)
+        else:
+            path.lineTo(x, y)
+    path.closeSubpath()
+    p.drawPath(path)
+
+    # 中心点
     p.setPen(Qt.NoPen)
     p.setBrush(QBrush(color))
-    p.drawEllipse(QPoint(int(cx), int(cy)), int(cx - 4), int(cy - 4))
+    p.drawEllipse(QPoint(int(cx), int(cy)), 1.5, 1.5)
+
     p.end()
     return QIcon(pix)
 
 
 # ═══════════════════════════════════════════════════════════
-# 聊天窗（Phase 4B）
+# 聊天窗
 # ═══════════════════════════════════════════════════════════
 
 class ChatWindow(QWidget):
-    """对话态窗口 — 聊天气泡 + 打字指示器 + Enter 发送"""
+    """对话态窗口 — 聊天气泡 + 打字指示器 + Enter 发送
+    支持嵌入模式（Qt.Widget，嵌入 EmotionalTab）和弹出模式（Qt.Window）。
+    """
 
+    # Persona 三色统一为蓝色系微妙差异（浅色适配）
     BUBBLE_COLORS = {
-        "user":      ("#2b5278", "#e8ecf1", "right"),
-        "companion": ("transparent", "#c8ccd4", "left"),
-        "recorder":  ("transparent", "#4A9EFF", "left"),
-        "scheduler": ("transparent", "#FF9E4A", "left"),
+        "user":      ("#5A9EBF", "#ffffff", "right"),
+        "companion": ("transparent", "#333333", "left"),
+        "recorder":  ("transparent", "#5A9EBF", "left"),
+        "scheduler": ("transparent", "#4a8eaf", "left"),
     }
 
-    def __init__(self, parent_dot, thinker=None):
+    def __init__(self, thinker=None):
         super().__init__()
-        self._dot = parent_dot
         self._thinker = thinker
         self._history = []
-        self._typing_label = None  # "正在输入..." 指示器
+        self._typing_label = None
+        self._embed_mode = False
+        self._embed_callback = None
+        self._shown_ids = set()
 
-        self.setWindowTitle("小鱼")
         self.setMinimumSize(360, 480)
         self.resize(400, 560)
 
@@ -181,97 +192,62 @@ class ChatWindow(QWidget):
         )
         self.setAttribute(Qt.WA_DeleteOnClose, False)
 
-        dot_center = parent_dot.frameGeometry().center()
-        self.move(dot_center.x() - 180, dot_center.y() - 480)
-
         self._setup_ui()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._refresh_messages)
         self._refresh_timer.start(3000)
 
+        # 5 分钟无交互自动收起
+        self._idle_timeout_ms = 5 * 60 * 1000
+        self._idle_timer = QTimer(self)
+        self._idle_timer.setSingleShot(True)
+        self._idle_timer.timeout.connect(self._on_idle_timeout)
+
+    def set_embed_mode(self, enabled, callback=None):
+        """切换嵌入/弹出模式"""
+        self._embed_mode = enabled
+        self._embed_callback = callback
+        self.hide()
+        if enabled:
+            self.setWindowFlags(Qt.Widget)
+            self.setAttribute(Qt.WA_DeleteOnClose, False)
+        else:
+            self.setWindowFlags(
+                Qt.Tool | Qt.WindowStaysOnTopHint | Qt.WindowCloseButtonHint
+            )
+        self.show()
+
     def _setup_ui(self):
+        # 仅气泡/特殊样式保留内联，其他由 cherry_style_light.qss 接管
         self.setStyleSheet("""
-            QWidget {
-                background-color: #1e1e1e;
-                color: #cccccc;
-                font-family: "Microsoft YaHei";
-                font-size: 13px;
-            }
-            QTextEdit {
-                background-color: #2a2a2a;
-                color: #e0e0e0;
-                border: 1px solid #3c3c3c;
-                border-radius: 8px;
-                padding: 10px 14px;
-                font-size: 13px;
-                selection-background-color: #264f78;
-            }
-            QTextEdit:focus {
-                border-color: #555;
-            }
-            QPushButton {
-                background-color: #0e639c;
-                color: #fff;
-                border: none;
-                border-radius: 6px;
-                font-size: 12px;
-                padding: 6px 14px;
-            }
-            QPushButton:hover {
-                background-color: #1177bb;
-            }
-            QPushButton:pressed {
-                background-color: #094771;
-            }
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                background: transparent;
-                width: 8px;
-                margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: #424242;
-                border-radius: 4px;
-                min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #555;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0;
-            }
+            QScrollArea { border: none; background: #f5f7fa; }
         """)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── 顶部栏 ──
+        # 顶部栏
         top_bar = QWidget()
+        top_bar.setObjectName("chatTopBar")
         top_bar.setFixedHeight(44)
-        top_bar.setStyleSheet("background: #252525; border-bottom: 1px solid #333;")
         top_layout = QHBoxLayout(top_bar)
         top_layout.setContentsMargins(14, 0, 14, 0)
 
         top_title = QLabel("小鱼")
-        top_title.setStyleSheet("font-size: 13px; font-weight: bold; color: #ddd; border: none;")
+        top_title.setObjectName("titleLabel")
         top_layout.addWidget(top_title)
-
         top_layout.addStretch()
 
         self._status_dot = QLabel("●")
-        self._status_dot.setStyleSheet("color: #4A9EFF; font-size: 8px; border: none;")
+        self._status_dot.setStyleSheet("color: #5A9EBF; font-size: 10px; border: none;")
         top_layout.addWidget(self._status_dot)
         status_text = QLabel("在线")
-        status_text.setStyleSheet("color: #777; font-size: 11px; border: none; margin-right: 4px;")
+        status_text.setObjectName("subtitleLabel")
         top_layout.addWidget(status_text)
-
         layout.addWidget(top_bar)
 
-        # ── 消息区 ──
+        # 消息区
         self._msg_area = QScrollArea()
         self._msg_area.setWidgetResizable(True)
         self._msg_container = QWidget()
@@ -283,29 +259,28 @@ class ChatWindow(QWidget):
         self._msg_area.setWidget(self._msg_container)
         layout.addWidget(self._msg_area, stretch=1)
 
-        # ── 输入区 ──
+        # 输入区
         input_box = QWidget()
-        input_box.setStyleSheet("background: #252525; border-top: 1px solid #333;")
+        input_box.setObjectName("chatInputBar")
         input_layout = QHBoxLayout(input_box)
         input_layout.setContentsMargins(12, 10, 12, 10)
         input_layout.setSpacing(8)
 
         self._input = QTextEdit()
-        self._input.setFixedHeight(40)
+        self._input.setFixedHeight(56)
         self._input.setPlaceholderText("输入消息...")
         self._input.installEventFilter(self)
         input_layout.addWidget(self._input)
 
         send_btn = QPushButton("发送")
-        send_btn.setFixedSize(52, 40)
+        send_btn.setObjectName("primaryBtn")
+        send_btn.setFixedSize(56, 56)
         send_btn.clicked.connect(self._on_send)
         input_layout.addWidget(send_btn)
 
         layout.addWidget(input_box)
-        self._shown_ids = set()
 
     def eventFilter(self, obj, event):
-        """Enter 发送，Shift+Enter 换行"""
         from PyQt5.QtCore import QEvent
         if obj == self._input and event.type() == QEvent.KeyPress:
             if event.key() == Qt.Key_Return and not (event.modifiers() & Qt.ShiftModifier):
@@ -326,8 +301,7 @@ class ChatWindow(QWidget):
 
     def _add_bubble(self, msg):
         persona = msg.get("persona", "companion")
-        bg, fg, align = self.BUBBLE_COLORS.get(persona,
-                          ("transparent", "#ccc", "left"))
+        bg, fg, align = self.BUBBLE_COLORS.get(persona, ("transparent", "#ccc", "left"))
         is_user = (align == "right")
 
         row = QWidget()
@@ -336,12 +310,11 @@ class ChatWindow(QWidget):
         row_layout.setContentsMargins(0, 0, 0, 0)
         row_layout.setSpacing(8)
 
-        # 头像小圆点（非用户消息）
         if not is_user:
             avatar = QLabel("●")
-            avatar.setFixedSize(18, 18)
-            dot_color = "#6a9955" if persona == "companion" else "#4A9EFF"
-            avatar.setStyleSheet(f"color: {dot_color}; font-size: 14px; "
+            avatar.setFixedSize(20, 20)
+            dot_color = "#5A9EBF" if persona == "companion" else "#4a8eaf"
+            avatar.setStyleSheet(f"color: {dot_color}; font-size: 16px; "
                                  "background: transparent; border: none;")
             avatar.setAlignment(Qt.AlignTop)
             row_layout.addWidget(avatar)
@@ -349,24 +322,18 @@ class ChatWindow(QWidget):
         if is_user:
             row_layout.addStretch()
 
-        # 气泡
         bubble = QLabel(msg["text"])
         bubble.setWordWrap(True)
         bubble.setMaximumWidth(280)
         if is_user:
             bubble.setStyleSheet(f"""
-                background-color: {bg};
-                color: {fg};
-                border-radius: 8px;
-                padding: 8px 14px;
-                font-size: 13px;
+                background-color: {bg}; color: {fg};
+                border-radius: 8px; padding: 8px 14px; font-size: 15px;
             """)
         else:
             bubble.setStyleSheet(f"""
-                background-color: transparent;
-                color: {fg};
-                padding: 6px 0px 6px 0px;
-                font-size: 13px;
+                background-color: transparent; color: {fg};
+                padding: 6px 0px 6px 0px; font-size: 15px;
             """)
         bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         row_layout.addWidget(bubble)
@@ -374,9 +341,8 @@ class ChatWindow(QWidget):
         if not is_user:
             row_layout.addStretch()
 
-        # 时间戳
         ts = QLabel(msg.get("time", ""))
-        ts.setStyleSheet("color: #555; font-size: 10px; background: transparent; border: none;")
+        ts.setStyleSheet("color: #999; font-size: 12px; background: transparent; border: none;")
         ts.setAlignment(Qt.AlignBottom)
         if is_user:
             row_layout.insertWidget(row_layout.count() - 1, ts)
@@ -386,24 +352,42 @@ class ChatWindow(QWidget):
         self._msg_layout.addWidget(row)
 
     def _add_typing_indicator(self):
-        """显示「小鱼正在打字...」"""
         if self._typing_label:
             return
         row = QWidget()
         row.setStyleSheet("background: transparent;")
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(QLabel("●"))
-        label = QLabel("  小鱼正在打字...")
-        label.setStyleSheet("color: #666; font-size: 12px; background: transparent; border: none;")
+
+        dot = QLabel("●")
+        dot.setStyleSheet("color: #5A9EBF; font-size: 14px; background: transparent; border: none;")
+        rl.addWidget(dot)
+
+        label = QLabel("  小鱼正在打字")
+        label.setStyleSheet("color: #888; font-size: 14px; background: transparent; border: none;")
         rl.addWidget(label)
+
+        self._typing_dots = QLabel("...")
+        self._typing_dots.setStyleSheet("color: #888; font-size: 14px; background: transparent; border: none;")
+        rl.addWidget(self._typing_dots)
         rl.addStretch()
+
+        self._dot_phase = 0
+        self._dot_timer = QTimer(self)
+        def _anim_dots():
+            self._dot_phase = (self._dot_phase + 1) % 4
+            self._typing_dots.setText("." * self._dot_phase if self._dot_phase else "...")
+        self._dot_timer.timeout.connect(_anim_dots)
+        self._dot_timer.start(400)
+
         self._typing_label = row
         self._msg_layout.addWidget(row)
         self._scroll_bottom()
 
     def _remove_typing_indicator(self):
         if self._typing_label:
+            if hasattr(self, '_dot_timer'):
+                self._dot_timer.stop()
             self._typing_label.deleteLater()
             self._typing_label = None
 
@@ -411,12 +395,25 @@ class ChatWindow(QWidget):
         sb = self._msg_area.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def _reset_idle_timer(self):
+        if self._embed_mode:
+            return
+        self._idle_timer.stop()
+        self._idle_timer.start(self._idle_timeout_ms)
+
+    def _on_idle_timeout(self):
+        if self._embed_callback:
+            self._embed_callback()
+        else:
+            self.hide()
+
     def _on_send(self):
         text = self._input.toPlainText().strip()
         if not text:
             return
 
-        # 用户气泡
+        self._reset_idle_timer()
+
         self._add_bubble({"time": datetime.now().strftime("%H:%M"),
                           "persona": "user", "text": text})
         self._input.clear()
@@ -443,170 +440,21 @@ class ChatWindow(QWidget):
         QTimer.singleShot(100, do_chat)
 
     def closeEvent(self, event):
-        self._dot.set_mode("accompany")
-        event.ignore()
-        self.hide()
+        if self._embed_mode and self._embed_callback:
+            self._embed_callback()
+            event.ignore()
+        else:
+            self.hide()
+            event.ignore()
 
     def showEvent(self, event):
         super().showEvent(event)
         self._refresh_messages()
+        self._reset_idle_timer()
 
 
 # ═══════════════════════════════════════════════════════════
-# 统一主窗口 — 三标签页（小鱼 + 任务 + 切片）
-# ═══════════════════════════════════════════════════════════
-
-class MainWindow(QWidget):
-    """三标签主窗口：对话 / 任务管理 / 时间切片"""
-
-    def __init__(self, parent_dot, thinker=None):
-        super().__init__()
-        self._dot = parent_dot
-        self.setWindowTitle("认知增强系统")
-        self.setMinimumSize(420, 520)
-        self.resize(440, 580)
-
-        self.setWindowFlags(
-            Qt.Window | Qt.WindowCloseButtonHint
-        )
-        self.setAttribute(Qt.WA_DeleteOnClose, False)
-
-        dot_center = parent_dot.frameGeometry().center()
-        self.move(max(0, dot_center.x() - 480), max(0, dot_center.y() - 600))
-
-        self.setStyleSheet("""
-            QWidget {
-                background-color: #1e1e1e;
-                color: #cccccc;
-                font-family: "Microsoft YaHei";
-                font-size: 13px;
-            }
-            QTabWidget::pane {
-                border: none;
-                background: #1e1e1e;
-            }
-            QTabBar::tab {
-                background: #252525;
-                color: #999;
-                border: none;
-                padding: 10px 24px;
-                font-size: 13px;
-                min-width: 80px;
-            }
-            QTabBar::tab:selected {
-                background: #1e1e1e;
-                color: #e0e0e0;
-                border-bottom: 2px solid #4A9EFF;
-            }
-            QTabBar::tab:hover:!selected {
-                color: #ccc;
-            }
-        """)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        self._tabs = QTabWidget()
-        layout.addWidget(self._tabs)
-
-        # Tab 0: 小鱼对话
-        self._chat = ChatWindow(parent_dot, thinker)
-        self._chat.setParent(None)
-        # 移除 ChatWindow 的窗口标志，改为普通 widget
-        self._chat.setWindowFlags(Qt.Widget)
-        self._tabs.addTab(self._chat, "💬 小鱼")
-
-        # Tab 1: 任务管理
-        self._tabs.addTab(self._make_launcher_tab(
-            "📋 任务管理助手",
-            "任务 CRUD · 贪心排程 · 拖拽排序 · 手动分配",
-            "http://127.0.0.1:5000"
-        ), "📋 任务")
-
-        # Tab 2: 时间切片
-        self._tabs.addTab(self._make_launcher_tab(
-            "⏱ 时间切片系统",
-            "手动切片 · 日历热力图 · 设备日志 · 情绪标签",
-            "http://127.0.0.1:5001"
-        ), "⏱ 切片")
-
-    def _make_launcher_tab(self, title, desc, url):
-        """启动面板：服务状态指示灯 + 标题描述 + 浏览器按钮"""
-        w = QWidget()
-        w.setStyleSheet("background: #1e1e1e;")
-        layout = QVBoxLayout(w)
-        layout.setAlignment(Qt.AlignCenter)
-        layout.setSpacing(14)
-
-        # 服务状态（初始显示检测中，100ms 后异步更新）
-        status_row = QHBoxLayout()
-        status_row.setAlignment(Qt.AlignCenter)
-        dot = QLabel("●")
-        dot.setStyleSheet("color: #888; font-size: 10px; border: none;")
-        status_row.addWidget(dot)
-        status_lbl = QLabel("检测中...")
-        status_lbl.setStyleSheet("color: #888; font-size: 12px; border: none; margin-left: 4px;")
-        status_row.addWidget(status_lbl)
-        layout.addLayout(status_row)
-
-        icon = QLabel(title.split(" ")[0])
-        icon.setStyleSheet("font-size: 42px; border: none; background: transparent;")
-        icon.setAlignment(Qt.AlignCenter)
-        layout.addWidget(icon)
-
-        name = QLabel(title)
-        name.setStyleSheet("font-size: 18px; font-weight: bold; color: #ddd; border: none;")
-        name.setAlignment(Qt.AlignCenter)
-        layout.addWidget(name)
-
-        info = QLabel(desc)
-        info.setStyleSheet("font-size: 12px; color: #777; border: none;")
-        info.setAlignment(Qt.AlignCenter)
-        layout.addWidget(info)
-
-        btn = QPushButton("打开")
-        btn.setStyleSheet("""
-            QPushButton {
-                background-color: #0e639c; color: #fff; border: none;
-                border-radius: 6px; padding: 8px 24px; font-size: 13px;
-            }
-            QPushButton:hover { background-color: #1177bb; }
-            QPushButton:disabled { background-color: #333; color: #666; }
-        """)
-        btn.setFixedWidth(120)
-        btn.setEnabled(False)  # 初始禁用，检测通过后启用
-        btn.clicked.connect(lambda: webbrowser.open(url))
-        layout.addWidget(btn, alignment=Qt.AlignCenter)
-
-        # 异步检测服务状态
-        def check():
-            online = _ping_url(url)
-            c = "#4d4" if online else "#e44"
-            t = "服务在线" if online else "服务离线"
-            dot.setStyleSheet(f"color: {c}; font-size: 10px; border: none;")
-            status_lbl.setStyleSheet(f"color: {c}; font-size: 12px; border: none; margin-left: 4px;")
-            status_lbl.setText(t)
-            btn.setEnabled(online)
-        QTimer.singleShot(200, check)
-
-        return w
-
-    def closeEvent(self, event):
-        """关闭窗口 = 缩回悬浮窗"""
-        self._dot.set_mode("accompany")
-        event.ignore()
-        self.hide()
-
-    def showEvent(self, event):
-        super().showEvent(event)
-        # 刷新聊天消息
-        if hasattr(self, '_chat') and self._chat:
-            self._chat._refresh_messages()
-
-
-# ═══════════════════════════════════════════════════════════
-# 悬浮圆点（Phase 4A + 模式管理）
+# 悬浮圆点
 # ═══════════════════════════════════════════════════════════
 
 class CompanionDot(QWidget):
@@ -630,10 +478,10 @@ class CompanionDot(QWidget):
         self.move(screen.width() - 140, screen.height() - 200)
 
         self._phase = 0.0
-        self._float_phase = 0.0    # 浮动动画独立相位
-        self._glow_phase = 0.0     # 光晕脉冲独立相位
+        self._float_phase = 0.0
+        self._glow_phase = 0.0
         self._breath_speed = 0.04
-        self._target_breath_speed = 0.04  # 平滑过渡
+        self._target_breath_speed = 0.04
         self._color = QColor("#4A9EFF")
         self._target_color = QColor("#4A9EFF")
         self._start_time = time.time()
@@ -643,37 +491,30 @@ class CompanionDot(QWidget):
         self._cy = self.WINDOW_SIZE / 2
         self._dot_r = self.DIAMETER / 2
         self._glow_alpha = 25
-        self._cached_frame = None     # Pixmap 预渲染缓存
+        self._cached_frame = None
         self._drag_offset = QPoint()
-        self._main_win = None  # 主窗口延迟创建
-        self._thinker = None   # Thinker 实例引用
+        self._main_win = None
+        self._thinker = None
+        self._tray = None
 
         self._timer = QTimer(self)
         self._timer.setTimerType(Qt.PreciseTimer)
         self._timer.timeout.connect(self._tick)
-        self._timer.start(16)  # 60 FPS
+        self._timer.start(16)
 
-        self._mode_locked = False   # Fix 3/5: 用户锁定当前模式
+        self._mode_locked = False
 
         self.show()
 
-    # ── 模式管理 ──────────────────────────────────────────
+    # ── 模式管理 ──
 
     def set_mode(self, mode, auto=False):
-        """切换存在模式：sleep(休眠) / accompany(陪伴) / dialog(对话)
-
-        auto=True 表示由 Agent 自动触发（IDE 检测），受 mode_locked 约束。
-        auto=False 表示用户手动操作，会关闭自动模式并锁定。
-        """
-        # 自动切换时，如果用户锁定了模式，则不响应
         if auto and self._mode_locked:
             return
-
-        # 手动操作时关闭自动模式
         if not auto:
             with _state_lock:
                 _state["auto_mode"] = False
-                _state["_mode_locked"] = False  # 手动操作重置锁定状态
+                _state["_mode_locked"] = False
                 _state["pending_auto_mode"] = None
 
         with _state_lock:
@@ -689,13 +530,11 @@ class CompanionDot(QWidget):
                 self._main_win.hide()
         elif mode == "dialog":
             self.show()
-            if not self._main_win:
-                self._main_win = MainWindow(self, self._thinker)
-            self._main_win.show()
-            self._main_win.raise_()
+            if self._main_win:
+                self._main_win.show()
+                self._main_win.raise_()
 
-        # 更新托盘文字
-        if hasattr(self, '_tray'):
+        if hasattr(self, '_tray') and self._tray:
             labels = {"sleep": "休眠", "accompany": "陪伴", "dialog": "对话"}
             self._tray.setToolTip(f"Agent · {labels.get(mode, mode)}")
 
@@ -703,7 +542,7 @@ class CompanionDot(QWidget):
         with _state_lock:
             return _state["mode"]
 
-    # ── 绘制 ──────────────────────────────────────────────
+    # ── 绘制 ──
 
     def paintEvent(self, event):
         if self._cached_frame and not self._cached_frame.isNull():
@@ -718,14 +557,12 @@ class CompanionDot(QWidget):
         return QColor(r, g, b)
 
     def _tick(self):
-        # ── 读取共享状态 ──
         with _state_lock:
             target_hex = _state["color"]
             breath_type = _state["breath"]
             text = _state["text"]
         self._target_color = QColor(target_hex)
 
-        # ── 动画参数更新 ──
         self._color = self._lerp_color(self._color, self._target_color, 0.065)
         target_speed = {"slow": 0.017, "normal": 0.03, "fast": 0.055}.get(breath_type, 0.025)
         self._target_breath_speed += (target_speed - self._target_breath_speed) * 0.065
@@ -743,7 +580,6 @@ class CompanionDot(QWidget):
         glow_pulse = math.sin(self._glow_phase) * 0.35 + 0.75
         glow_alpha = max(10, min(40, int(25 * glow_pulse)))
 
-        # ── Pixmap 预渲染：所有绘制在此完成，paintEvent 只做一次 blit ──
         color = self._color
         glow_r = dot_r + 6
         pix = QPixmap(self.WINDOW_SIZE, self.WINDOW_SIZE)
@@ -778,18 +614,16 @@ class CompanionDot(QWidget):
         pp.drawEllipse(QPoint(int(hl_x - hl_r * 0.4), int(hl_y - hl_r * 0.3)),
                        int(hl_r * 0.45), int(hl_r * 0.45))
 
-        # 文字（自动截断防溢出）
+        # 文字
         elapsed = int((time.time() - self._start_time) / 60)
         display_text = text if text else (
             f"已陪伴 {elapsed} 分钟" if elapsed >= 1 else "刚刚苏醒..."
         )
         if display_text and self.get_mode() != "sleep":
-            font = QFont("Microsoft YaHei", 8)
+            font = QFont("Microsoft YaHei", 10)
             pp.setFont(font)
-            # 文本区域：球下方留 4px 左右边距
             text_rect = pix.rect().adjusted(6, int(dot_r + 18), -6, -2)
-            fm = pp.fontMetrics()
-            # 超长则省略号截断
+            fm = QFontMetrics(font)
             if fm.horizontalAdvance(display_text) > text_rect.width():
                 display_text = fm.elidedText(display_text, Qt.ElideRight, text_rect.width())
             pp.setPen(QColor(255, 255, 255, 160))
@@ -798,7 +632,7 @@ class CompanionDot(QWidget):
 
         self._cached_frame = pix
 
-        # ── Fix 3: 自动模式切换 ──
+        # 自动模式切换
         with _state_lock:
             pending = _state.get("pending_auto_mode")
         if pending and not self._mode_locked:
@@ -808,7 +642,7 @@ class CompanionDot(QWidget):
 
         self.update()
 
-    # ── 拖拽 ──────────────────────────────────────────────
+    # ── 拖拽 ──
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -822,7 +656,7 @@ class CompanionDot(QWidget):
     def mouseReleaseEvent(self, event):
         self._dragging = False
 
-    # ── Fix 5: 右键菜单 ──────────────────────────────────
+    # ── 右键菜单 ──
 
     def contextMenuEvent(self, event):
         menu = QMenu()
@@ -831,6 +665,11 @@ class CompanionDot(QWidget):
         sleep_action = mode_menu.addAction("💤 休眠态")
         companion_action = mode_menu.addAction("🌙 陪伴态")
         chat_action = mode_menu.addAction("💬 对话态")
+
+        menu.addSeparator()
+
+        # 打开主面板
+        panel_action = menu.addAction("📋 打开主面板")
 
         menu.addSeparator()
         lock_text = "🔒 锁定当前模式" if not self._mode_locked else "🔓 解锁模式"
@@ -846,6 +685,10 @@ class CompanionDot(QWidget):
             self.set_mode("accompany")
         elif action == chat_action:
             self.set_mode("dialog")
+        elif action == panel_action:
+            if self._main_win:
+                self._main_win.show()
+                self._main_win.raise_()
         elif action == lock_action:
             self._mode_locked = not self._mode_locked
         elif action == exit_action:
@@ -856,7 +699,7 @@ class CompanionDot(QWidget):
                 self._tray.hide()
             QApplication.quit()
 
-    # ── 交互 ──────────────────────────────────────────────
+    # ── 交互 ──
 
     def enterEvent(self, event):
         with _state_lock:
@@ -866,31 +709,34 @@ class CompanionDot(QWidget):
             self.setToolTip(tip)
         else:
             breath_cn = {"slow": "静默观察中", "normal": "关注中", "fast": "有话要说"}
-            self.setToolTip(f"Agent 运行中\n{breath_cn.get(breath, '')}\n双击打开对话窗")
+            self.setToolTip(f"Agent 运行中\n{breath_cn.get(breath, '')}\n双击打开主面板")
 
     def mouseDoubleClickEvent(self, event):
-        """双击：展开对话窗"""
-        current = self.get_mode()
-        if current == "dialog":
-            self.set_mode("accompany")  # 缩回
+        """双击：显示/隐藏主面板"""
+        if self._main_win:
+            if self._main_win.isVisible():
+                self._main_win.hide()
+            else:
+                self._main_win.show()
+                self._main_win.raise_()
         else:
-            self.set_mode("dialog")     # 展开
+            self.set_mode("dialog")
 
 
 # ═══════════════════════════════════════════════════════════
-# 系统托盘（Phase 4C）
+# 系统托盘
 # ═══════════════════════════════════════════════════════════
 
 class TrayManager:
     """系统托盘图标 + 右键菜单"""
 
-    def __init__(self, dot):
+    def __init__(self, dot, main_win=None):
         self._dot = dot
+        self._main_win = main_win
         self._tray = QSystemTrayIcon()
         self._tray.setIcon(_make_tray_icon("#4A9EFF"))
         self._tray.setToolTip("Agent · 陪伴")
 
-        # 菜单
         menu = QMenu()
 
         mode_menu = QMenu("模式切换", menu)
@@ -910,25 +756,25 @@ class TrayManager:
         menu.addMenu(mode_menu)
         menu.addSeparator()
 
+        act_panel = QAction("显示主面板", menu)
+        act_panel.triggered.connect(self._show_panel)
+        menu.addAction(act_panel)
+        menu.addSeparator()
+
         act_quit = QAction("退出 Agent", menu)
         act_quit.triggered.connect(self._quit)
         menu.addAction(act_quit)
 
         self._tray.setContextMenu(menu)
-
-        # 左键点击：切换 陪伴/对话
         self._tray.activated.connect(self._on_tray_click)
-
         self._tray.show()
 
-        # 定时更新托盘图标颜色（每 2 秒）
         self._icon_timer = QTimer()
         self._icon_timer.timeout.connect(self._update_icon)
         self._icon_timer.start(2000)
 
     def _on_tray_click(self, reason):
-        """左键点击托盘：陪伴↔对话切换"""
-        if reason == QSystemTrayIcon.Trigger:  # 左键单击
+        if reason == QSystemTrayIcon.Trigger:
             current = self._dot.get_mode()
             if current == "dialog":
                 self._dot.set_mode("accompany")
@@ -937,6 +783,11 @@ class TrayManager:
             else:
                 self._dot.set_mode("accompany")
 
+    def _show_panel(self):
+        if self._main_win:
+            self._main_win.show()
+            self._main_win.raise_()
+
     def _update_icon(self):
         with _state_lock:
             color = _state["color"]
@@ -944,66 +795,320 @@ class TrayManager:
 
     def _quit(self):
         self._dot.hide()
-        if self._dot._main_win:
-            self._dot._main_win.close()
+        if self._main_win:
+            self._main_win.close()
         self._tray.hide()
         QApplication.quit()
+
+
+# ═══════════════════════════════════════════════════════════
+# stdout/stderr 重定向到终端日志
+# ═══════════════════════════════════════════════════════════
+
+class _LogRedirector:
+    """将 print() / sys.stderr 输出重定向到 bridge.log_line"""
+    def __init__(self, original):
+        self._original = original
+
+    def write(self, text):
+        if text and text.strip():
+            from agent_bridge import bridge
+            bridge.log_line.emit("STDOUT", text.rstrip())
+        if self._original:
+            self._original.write(text)
+
+    def flush(self):
+        if self._original:
+            self._original.flush()
+
+
+# ═══════════════════════════════════════════════════════════
+# 主窗口（QMainWindow：三 tab + 终端日志面板）
+# ═══════════════════════════════════════════════════════════
+
+class MainWindow(QMainWindow):
+    """Cherry Studio 风格主窗口 — 左侧 sidebar + 右侧内容区"""
+
+    # Sidebar 图标映射（qtawesome icon name, label）
+    NAV_ITEMS = [
+        ("fa5s.clock", " 时间切片"),
+        ("fa5s.brain", " 情感辅助"),
+        ("fa5s.tasks", " 任务助理"),
+    ]
+
+    def __init__(self, parent_dot, chat_window, thinker=None):
+        super().__init__()
+        self._dot = parent_dot
+        self._chat = chat_window
+        self._thinker = thinker
+
+        self.setWindowTitle("认知增强系统")
+        self.setMinimumSize(1000, 700)
+        self.resize(1100, 750)
+
+        # 加载浅色 QSS 样式
+        qss_path = os.path.join(BASE_DIR, "cherry_style_light.qss")
+        if os.path.exists(qss_path):
+            try:
+                with open(qss_path, "r", encoding="utf-8") as f:
+                    self.setStyleSheet(f.read())
+            except Exception:
+                pass
+
+        # 全局字体
+        self.setFont(QFont("Microsoft YaHei UI", 10))
+
+        # ── 中央布局：水平分割（sidebar | 内容区）──
+        central = QWidget()
+        self.setCentralWidget(central)
+        main_layout = QHBoxLayout(central)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # ─ 左侧 Sidebar ──
+        self._sidebar = self._build_sidebar()
+        main_layout.addWidget(self._sidebar)
+
+        # ── 右侧内容区（QStackedWidget）──
+        self._stack = QStackedWidget()
+        self._stack.setStyleSheet("background: #f5f7fa;")
+
+        from widgets.time_slice_tab import TimeSliceTab
+        self._time_slice_tab = TimeSliceTab()
+        self._stack.addWidget(self._time_slice_tab)
+
+        from widgets.emotional_tab import EmotionalTab
+        self._emotional_tab = EmotionalTab(thinker)
+        self._emotional_tab.set_chat(self._chat)
+        self._stack.addWidget(self._emotional_tab)
+
+        from widgets.task_tab import TaskTab
+        self._task_tab = TaskTab()
+        self._stack.addWidget(self._task_tab)
+
+        main_layout.addWidget(self._stack, stretch=1)
+
+        # 默认选中「时间切片」
+        self._stack.setCurrentIndex(0)
+
+        # ── 终端日志面板（QDockWidget，底部）──
+        from widgets.terminal_panel import TerminalPanel
+        self._terminal = TerminalPanel(self)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self._terminal)
+
+        # View 菜单
+        menubar = self.menuBar()
+        view_menu = menubar.addMenu("视图")
+        view_menu.addAction(self._terminal.toggleViewAction())
+
+        # 连接 bridge 信号
+        self._connect_bridge()
+
+    def _build_sidebar(self):
+        """构建左侧导航栏"""
+        try:
+            import qtawesome as qta
+        except Exception:
+            qta = None
+
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(180)
+
+        layout = QVBoxLayout(sidebar)
+        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(6)
+
+        # 标题
+        title = QLabel("认知增强系统")
+        title.setObjectName("titleLabel")
+        title.setAlignment(Qt.AlignCenter)
+        title.setFixedHeight(36)
+        layout.addWidget(title)
+        layout.addSpacing(12)
+
+        # 分隔线
+        sep = QFrame()
+        sep.setObjectName("separator")
+        sep.setFixedHeight(1)
+        layout.addWidget(sep)
+        layout.addSpacing(8)
+
+        # 导航项
+        self._nav_buttons = []
+        self._nav_labels = []
+        self._nav_icons = []
+
+        for idx, (icon_name, label_text) in enumerate(self.NAV_ITEMS):
+            # 图标
+            icon_label = QLabel()
+            icon_label.setFixedSize(24, 24)
+            icon_label.setAlignment(Qt.AlignCenter)
+            if qta:
+                try:
+                    color = "#888" if idx != 0 else "#5A9EBF"
+                    icon = qta.icon(icon_name, color=color, scale_factor=1.2)
+                    icon_label.setPixmap(icon.pixmap(20, 20))
+                except Exception:
+                    pass
+            self._nav_icons.append(icon_label)
+
+            # 文字
+            text_label = QLabel(label_text.strip())
+            text_label.setObjectName("sidebarLabelSelected" if idx == 0 else "sidebarLabelInactive")
+            text_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self._nav_labels.append(text_label)
+
+            # 容器（整行可点击）
+            row = QFrame()
+            row.setObjectName("sidebarItemSelected" if idx == 0 else "sidebarItem")
+            row.setFixedHeight(40)
+            row.setCursor(Qt.PointingHandCursor)
+            row.setProperty("navIndex", idx)
+
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(10, 0, 10, 0)
+            row_layout.setSpacing(10)
+            row_layout.addWidget(icon_label)
+            row_layout.addWidget(text_label, stretch=1)
+
+            self._nav_buttons.append(row)
+            layout.addWidget(row)
+
+            # 点击事件
+            row.mousePressEvent = lambda ev, i=idx: self._on_nav_click(i)
+
+        layout.addStretch()
+
+        # 底部悬浮窗状态
+        self._sidebar_status = QLabel("● 陪伴中")
+        self._sidebar_status.setStyleSheet(
+            "color: #5A9EBF; font-size: 12px; background: transparent; border: none;"
+        )
+        self._sidebar_status.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._sidebar_status)
+
+        return sidebar
+
+    def _on_nav_click(self, index):
+        """切换导航项"""
+        self._stack.setCurrentIndex(index)
+
+        for i, btn in enumerate(self._nav_buttons):
+            if i == index:
+                btn.setObjectName("sidebarItemSelected")
+                self._nav_labels[i].setObjectName("sidebarLabelSelected")
+                # 更新图标颜色
+                if self._nav_icons[i]:
+                    try:
+                        import qtawesome as qta
+                        icon = qta.icon(self.NAV_ITEMS[i][0], color="#5A9EBF", scale_factor=1.2)
+                        self._nav_icons[i].setPixmap(icon.pixmap(20, 20))
+                    except Exception:
+                        pass
+            else:
+                btn.setObjectName("sidebarItem")
+                self._nav_labels[i].setObjectName("sidebarLabelInactive")
+                if self._nav_icons[i]:
+                    try:
+                        import qtawesome as qta
+                        icon = qta.icon(self.NAV_ITEMS[i][0], color="#888", scale_factor=1.2)
+                        self._nav_icons[i].setPixmap(icon.pixmap(20, 20))
+                    except Exception:
+                        pass
+            # 强制刷新样式
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+            self._nav_labels[i].style().unpolish(self._nav_labels[i])
+            self._nav_labels[i].style().polish(self._nav_labels[i])
+
+    def _connect_bridge(self):
+        from agent_bridge import bridge
+        bridge.status_updated.connect(self._on_status_updated)
+        bridge.message_added.connect(self._on_message_added)
+        bridge.mode_requested.connect(self._on_mode_requested)
+
+    def _on_status_updated(self, color, breath, text):
+        update_status(color=color, breath=breath, text=text)
+
+    def _on_message_added(self, persona, text):
+        add_message(persona, text)
+
+    def _on_mode_requested(self, mode):
+        request_auto_mode(mode)
+
+    def closeEvent(self, event):
+        """关闭窗口 = 缩回悬浮窗，不退出程序"""
+        self._dot.set_mode("accompany")
+        event.ignore()
+        self.hide()
 
 
 # ═══════════════════════════════════════════════════════════
 # 入口
 # ═══════════════════════════════════════════════════════════
 
-def _start_agent(dot):
-    """后台线程启动 Agent 循环，共享 Thinker 给聊天窗"""
-    from agent_loop import run_agent
-    from agent_thinker import Thinker
-
-    # 在主线程外创建 Thinker（给 Agent 循环和聊天窗共享）
-    try:
-        thinker = Thinker()
-        # 快速连通检查
-        thinker.client.chat.completions.create(
-            model=thinker.model,
-            messages=[{"role": "user", "content": "ping"}],
-            max_tokens=4, timeout=8,
-        )
-        dot._thinker = thinker  # 聊天窗可访问
-    except Exception as e:
-        print(f"[UI] Thinker 创建失败: {e}")
-        thinker = None
-
-    def status_cb(**kwargs):
-        update_status(**kwargs)
-        text = kwargs.get("text", "")
-        persona = kwargs.get("persona", "recorder")
-        if text:
-            add_message(persona, text)
-
-    run_agent(status_cb=status_cb, thinker=thinker, mode_cb=request_auto_mode)
-
-
 def main():
     if not _acquire_single_instance():
         sys.exit(0)
-    print("[UI] 启动悬浮窗 + 托盘...")
+
+    # QApplication 必须在 stdout 重定向前创建（bridge 信号需要 Qt 环境）
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-    app.setApplicationName("Agent Proto")
+    app.setApplicationName("认知增强系统")
 
-    # 悬浮窗 + 托盘
+    # stdout/stderr 重定向到终端日志
+    _original_stdout = sys.stdout
+    _original_stderr = sys.stderr
+    sys.stdout = _LogRedirector(_original_stdout)
+    sys.stderr = _LogRedirector(_original_stderr)
+
+    print("[UI] 启动认知增强系统...")
+
+    # 悬浮窗
     dot = CompanionDot()
-    tray_mgr = TrayManager(dot)
-    dot._tray = tray_mgr._tray  # 供 set_mode 更新 tooltip
 
-    # 后台线程启动 Agent（共享 Thinker 实例给聊天窗）
+    # 聊天窗（嵌入模式，thinker 由 Agent 线程稍后设置）
+    chat = ChatWindow(thinker=None)
+
+    # 主窗口
+    main_win = MainWindow(dot, chat, thinker=None)
+    dot._main_win = main_win
+
+    # 托盘
+    tray_mgr = TrayManager(dot, main_win)
+    dot._tray = tray_mgr._tray
+
+    # 后台线程：启动 Agent
     agent_thread = threading.Thread(
-        target=_start_agent, args=(dot,), daemon=True, name="AgentLoop"
+        target=_start_agent, args=(dot, chat), daemon=True, name="AgentLoop"
     )
     agent_thread.start()
     print("[UI] Agent 后台线程已启动")
 
     sys.exit(app.exec_())
+
+
+def _start_agent(dot, chat):
+    """后台线程：创建 Thinker → 启动 Agent 循环"""
+    from agent_loop import run_agent
+    from agent_thinker import Thinker
+
+    try:
+        thinker = Thinker()
+        thinker.client.chat.completions.create(
+            model=thinker.model,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=4, timeout=8,
+        )
+        dot._thinker = thinker
+        chat._thinker = thinker
+        print("[UI] Thinker 连接成功")
+    except Exception as e:
+        print(f"[UI] Thinker 创建失败: {e}")
+        thinker = None
+
+    run_agent(thinker=thinker)
 
 
 if __name__ == "__main__":
